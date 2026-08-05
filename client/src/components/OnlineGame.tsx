@@ -7,7 +7,7 @@ import DiceRoller from './DiceRoller';
 import TradePanel from './TradePanel';
 import BuildMenu from './BuildMenu';
 
-const HEX_SIZE = 50;
+const HEX_SIZE = 58;
 
 export default function OnlineGame() {
   const { gameState, playerId, room, sendAction, sendChat, chatMessages, leaveRoom } = useSocket();
