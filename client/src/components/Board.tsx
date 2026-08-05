@@ -94,7 +94,10 @@ function drawHexWithImage(
   type: string,
   hasRobber: boolean,
 ) {
-  const pts = hexCorners(cx, cy, size * 0.98);
+  // Draw terrain smaller than full hex size so there's a visible gap between
+  // tiles (the table/wood shows through), matching the real board layout.
+  const drawSize = size * 0.86;
+  const pts = hexCorners(cx, cy, drawSize);
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.35)';
   ctx.shadowBlur = 8;
@@ -133,7 +136,8 @@ function drawHexWithImage(
 }
 
 function drawNumberToken(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number, num: number) {
-  const r = size * 0.28;
+  // Scale token to sit within the shrunken hex (drawHexWithImage uses 0.86)
+  const r = size * 0.86 * 0.30;
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.35)';
   ctx.shadowBlur = 4;
@@ -152,12 +156,12 @@ function drawNumberToken(ctx: CanvasRenderingContext2D, cx: number, cy: number, 
   ctx.stroke();
   const isHot = num === 6 || num === 8;
   ctx.fillStyle = isHot ? '#c62828' : '#2c2c2c';
-  ctx.font = `bold ${size * 0.32}px Georgia, serif`;
+  ctx.font = `bold ${size * 0.86 * 0.34}px Georgia, serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(String(num), cx, cy - r * 0.08);
   const pips = num <= 7 ? num - 1 : 13 - num;
-  const pipR = Math.max(1.2, size * 0.035);
+  const pipR = Math.max(1.2, size * 0.86 * 0.04);
   ctx.fillStyle = isHot ? '#c62828' : '#444';
   const pipY = cy + r * 0.45;
   const spacing = pipR * 2.8;
@@ -171,7 +175,7 @@ function drawNumberToken(ctx: CanvasRenderingContext2D, cx: number, cy: number, 
 
 function drawRobber(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number, img: HTMLImageElement | null) {
   if (img && img.complete && img.naturalWidth > 0) {
-    const s = size * 0.75;
+    const s = size * 0.86 * 0.75;
     ctx.drawImage(img, cx - s / 2, cy - s / 2, s, s);
     return;
   }
