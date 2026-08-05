@@ -8,7 +8,7 @@ import { createInitialState, getCurrentPlayer, rollDice, placeSetupSettlement, p
 import { getHexCorners } from './game/board.js';
 
 const PORT = parseInt(process.env.PORT || '3001');
-const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5173';
+const CORS_ORIGIN = process.env.CORS_ORIGIN || 'https://catan-lac.vercel.app';
 
 // ── Room Management ──
 
