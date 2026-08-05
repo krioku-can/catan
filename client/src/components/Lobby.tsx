@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useSocket } from '../hooks/useSocket';
 
-export default function Lobby() {
+export default function Lobby({ onBack }: { onBack?: () => void }) {
   const { connected, room, playerId, createRoom, joinRoom, toggleReady, addAI, removeAI, startGame, leaveRoom } = useSocket();
-  const [name, setName] = useState('');
+  const [name, setName] = useState(() => localStorage.getItem('catan_name') || '');
   const [roomCode, setRoomCode] = useState('');
   const [showJoin, setShowJoin] = useState(false);
 
@@ -13,6 +13,7 @@ export default function Lobby() {
         <h1 style={styles.title}>🏝️ CATAN</h1>
         <p style={styles.subtitle}>Connecting to server...</p>
         <div style={styles.spinner}>⏳</div>
+        {onBack && <button type="button" style={styles.secondaryBtn} onClick={onBack}>Back</button>}
       </div>
     );
   }
@@ -27,7 +28,7 @@ export default function Lobby() {
         <div style={styles.roomCard}>
           <div style={styles.roomHeader}>
             <span style={styles.roomCode}>Room: {room.id}</span>
-            <button style={styles.leaveBtn} onClick={leaveRoom}>Leave</button>
+            <button type="button" style={styles.leaveBtn} onClick={leaveRoom}>Leave</button>
           </div>
           <p style={styles.shareHint}>Share this code with your family!</p>
 
@@ -44,22 +45,23 @@ export default function Lobby() {
                   {p.ready ? '✅' : '⏳'}
                 </span>
                 {isHost && p.isAI && (
-                  <button style={styles.removeBtn} onClick={() => removeAI(p.playerId)}>✕</button>
+                  <button type="button" style={styles.removeBtn} onClick={() => removeAI(p.playerId)}>✕</button>
                 )}
               </div>
             ))}
           </div>
 
           <div style={styles.actions}>
-            <button style={styles.readyBtn} onClick={toggleReady}>
+            <button type="button" style={styles.readyBtn} onClick={toggleReady}>
               {room.players.find(p => p.playerId === playerId)?.ready ? 'Not Ready' : 'Ready'}
             </button>
             {isHost && (
               <>
-                <button style={styles.aiBtn} onClick={addAI} disabled={room.players.length >= 4}>
+                <button type="button" style={styles.aiBtn} onClick={addAI} disabled={room.players.length >= 4}>
                   + AI
                 </button>
                 <button
+                  type="button"
                   style={{ ...styles.startBtn, ...(!canStart ? styles.disabledBtn : {}) }}
                   onClick={startGame}
                   disabled={!canStart}
@@ -76,26 +78,34 @@ export default function Lobby() {
 
   return (
     <div style={styles.container}>
-      <h1 style={styles.title}>🏝️ CATAN</h1>
-      <p style={styles.subtitle}>Settle the island with your family!</p>
+      <h1 style={styles.title}>🏝️ Online</h1>
+      <p style={styles.subtitle}>Play with family over the internet</p>
 
       <div style={styles.card}>
         <input
           style={styles.input}
           placeholder="Your name"
           value={name}
-          onChange={e => setName(e.target.value)}
+          onChange={e => {
+            setName(e.target.value);
+            localStorage.setItem('catan_name', e.target.value);
+          }}
           maxLength={20}
         />
 
         {!showJoin ? (
           <>
-            <button style={styles.primaryBtn} onClick={() => createRoom(name || 'Host')}>
+            <button type="button" style={styles.primaryBtn} onClick={() => createRoom(name || 'Host')}>
               Create Room
             </button>
-            <button style={styles.secondaryBtn} onClick={() => setShowJoin(true)}>
+            <button type="button" style={styles.secondaryBtn} onClick={() => setShowJoin(true)}>
               Join Room
             </button>
+            {onBack && (
+              <button type="button" style={styles.secondaryBtn} onClick={onBack}>
+                Back
+              </button>
+            )}
           </>
         ) : (
           <>
@@ -106,10 +116,10 @@ export default function Lobby() {
               onChange={e => setRoomCode(e.target.value.toUpperCase())}
               maxLength={4}
             />
-            <button style={styles.primaryBtn} onClick={() => joinRoom(roomCode, name || 'Player')}>
+            <button type="button" style={styles.primaryBtn} onClick={() => joinRoom(roomCode, name || 'Player')}>
               Join
             </button>
-            <button style={styles.secondaryBtn} onClick={() => setShowJoin(false)}>
+            <button type="button" style={styles.secondaryBtn} onClick={() => setShowJoin(false)}>
               Back
             </button>
           </>
@@ -132,7 +142,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 20,
   },
   title: {
-    fontSize: 40,
+    fontSize: 36,
     color: '#ffd700',
     margin: 0,
     textShadow: '0 0 20px rgba(255,215,0,0.3)',
@@ -144,6 +154,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   spinner: {
     fontSize: 40,
+    marginBottom: 16,
   },
   card: {
     background: '#16213e',

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import type { GameState, GameConfig, PlayerColor, ResourceType } from '../game/types';
 import { createInitialState, getCurrentPlayer, rollDice, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight } from '../game/rules';
 import { getHexCorners } from '../game/board';
@@ -9,17 +9,25 @@ import TradePanel from './TradePanel';
 import BuildMenu from './BuildMenu';
 import GameLog from './GameLog';
 
-const HEX_SIZE = 55;
+const HEX_SIZE = 58;
 
-export default function Game() {
+interface GameProps {
+  quickStart?: boolean;
+  playerName?: string;
+  onExit?: () => void;
+}
+
+export default function Game({ quickStart = false, playerName = 'You', onExit }: GameProps) {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [_config, _setConfig] = useState<GameConfig | null>(null);
   const [selectedAction, setSelectedAction] = useState<string | null>(null);
   const [log, setLog] = useState<string[]>([]);
-  const [showSetup, setShowSetup] = useState(true);
+  const [showSetup, setShowSetup] = useState(!quickStart);
   const [diceRolling, setDiceRolling] = useState(false);
   const [robberMode, setRobberMode] = useState(false);
   const [stealTargets, setStealTargets] = useState<PlayerColor[]>([]);
+  const [showPanel, setShowPanel] = useState<'actions' | 'hand' | 'log' | null>('actions');
+  const startedRef = useRef(false);
 
   const addLog = useCallback((msg: string) => {
     setLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
@@ -32,7 +40,74 @@ export default function Game() {
     setShowSetup(false);
     addLog(`Game started! ${c.playerNames.join(' vs ')}`);
     addLog('Setup phase: place your first settlement');
-  }, [addLog, _setConfig]);
+  }, [addLog]);
+
+  // One-tap vs AI
+  useEffect(() => {
+    if (!quickStart || startedRef.current) return;
+    startedRef.current = true;
+    startGame({
+      numPlayers: 4,
+      playerNames: [playerName, 'AI Blue', 'AI White', 'AI Orange'],
+      aiPlayers: [1, 2, 3],
+    });
+  }, [quickStart, playerName, startGame]);
+
+  // Auto-run AI turns when it's an AI player's turn
+  useEffect(() => {
+    if (!gameState) return;
+    const current = getCurrentPlayer(gameState);
+    if (!current.isAI) return;
+
+    const t = setTimeout(() => {
+      const action = aiTurn(gameState);
+      if (!action) {
+        setGameState({ ...gameState });
+        return;
+      }
+      switch (action.action) {
+        case 'roll_dice': {
+          const [d1, d2] = rollDice(gameState);
+          addLog(`${current.name} rolled ${d1 + d2}`);
+          break;
+        }
+        case 'skip_trade':
+          gameState.phase = 'build';
+          break;
+        case 'place_settlement':
+          if (gameState.setupPhase) placeSetupSettlement(gameState, action.data.key);
+          else placeSettlement(gameState, action.data.key);
+          if (gameState.setupPhase) advanceSetup(gameState);
+          addLog(`${current.name} placed a settlement`);
+          break;
+        case 'place_road':
+          if (gameState.setupPhase) placeSetupRoad(gameState, action.data.key);
+          else placeRoad(gameState, action.data.key);
+          if (gameState.setupPhase) advanceSetup(gameState);
+          addLog(`${current.name} placed a road`);
+          break;
+        case 'place_city':
+          placeCity(gameState, action.data.key);
+          addLog(`${current.name} built a city`);
+          break;
+        case 'buy_dev_card':
+          buyDevCard(gameState);
+          addLog(`${current.name} bought a dev card`);
+          break;
+        case 'end_turn':
+          endTurn(gameState);
+          addLog(`${current.name} ended turn`);
+          break;
+        case 'advance_setup':
+          advanceSetup(gameState);
+          break;
+        default:
+          break;
+      }
+      setGameState({ ...gameState });
+    }, 650);
+    return () => clearTimeout(t);
+  }, [gameState, addLog]);
 
   const handleHexClick = useCallback((q: number, r: number) => {
     if (!gameState) return;
@@ -190,16 +265,42 @@ export default function Game() {
   }, [gameState, addLog]);
 
   if (showSetup) {
-    return <SetupScreen onStart={startGame} />;
+    return <SetupScreen onStart={startGame} onBack={onExit} />;
   }
 
-  if (!gameState) return null;
+  if (!gameState) {
+    return (
+      <div style={styles.setupScreen}>
+        <p style={styles.subtitle}>Starting game…</p>
+      </div>
+    );
+  }
 
   const player = getCurrentPlayer(gameState);
   const isMyTurn = !player.isAI;
+  const me = gameState.players.find(p => !p.isAI) || gameState.players[0];
 
   return (
-    <div style={styles.container}>
+    <div style={styles.mobileContainer}>
+      <div style={styles.topBar}>
+        <div style={styles.turnInfo}>
+          <div style={{ ...styles.turnDot, backgroundColor: player.color }} />
+          <span style={styles.turnName}>
+            {player.name}{player.isAI ? ' 🤖' : ''}
+            {isMyTurn ? <span style={styles.youTag}> (You)</span> : ''}
+          </span>
+          <span style={styles.phaseTag}>{gameState.setupPhase ? 'Setup' : gameState.phase}</span>
+        </div>
+        <div style={styles.topActions}>
+          {gameState.dice && (
+            <span style={styles.diceResult}>🎲 {gameState.dice[0]}+{gameState.dice[1]}</span>
+          )}
+          {onExit && (
+            <button style={styles.leaveBtn} onClick={onExit} type="button">✕</button>
+          )}
+        </div>
+      </div>
+
       <div style={styles.boardArea}>
         <Board
           gameState={gameState}
@@ -211,80 +312,128 @@ export default function Game() {
           selectedAction={selectedAction}
         />
       </div>
-      <div style={styles.sidebar}>
-        <div style={styles.turnInfo}>
-          <div style={{ ...styles.turnBadge, borderColor: player.color }}>
-            {player.name}'s Turn
-            {player.isAI && <span> 🤖</span>}
-          </div>
-          <div style={styles.phaseLabel}>
-            Phase: {gameState.phase.replace('_', ' ')}
-          </div>
-          {gameState.setupPhase && (
-            <div style={styles.setupHint}>
-              {gameState.phase === 'setup_settlement' ? 'Click a hex corner to place a settlement' : 'Click an edge to place a road'}
-            </div>
-          )}
+
+      {gameState.setupPhase && isMyTurn && (
+        <div style={styles.setupHintBar}>
+          {gameState.phase === 'setup_settlement'
+            ? '👆 Tap a corner for a settlement'
+            : '👆 Tap an edge for a road'}
         </div>
+      )}
 
-        {!gameState.setupPhase && (
-          <>
-            <DiceRoller
-              onRoll={handleRollDice}
-              rolling={diceRolling}
-              disabled={gameState.phase !== 'roll' || !isMyTurn}
-              result={gameState.dice}
-            />
-
-            <BuildMenu
-              player={player}
-              phase={gameState.phase}
-              isMyTurn={isMyTurn}
-              selectedAction={selectedAction}
-              onSelectAction={setSelectedAction}
-              onBuyDevCard={handleBuyDevCard}
-              onPlayKnight={handlePlayKnight}
-              onEndTurn={handleEndTurn}
-              hasKnight={player.devCards.some(c => c.type === 'knight' && !c.played)}
-            />
-
-            <TradePanel
-              gameState={gameState}
-              isMyTurn={isMyTurn}
-              onTrade={() => {
-                addLog(`Trade offer from ${player.name}`);
-                setGameState({ ...gameState });
-              }}
-            />
-          </>
-        )}
-
-        <PlayerHand player={player} />
-
-        <GameLog log={log} />
+      <div style={styles.tabBar}>
+        <button
+          type="button"
+          style={{ ...styles.tab, ...(showPanel === 'actions' ? styles.tabActive : {}) }}
+          onClick={() => setShowPanel(showPanel === 'actions' ? null : 'actions')}
+        >
+          🎮 Actions
+        </button>
+        <button
+          type="button"
+          style={{ ...styles.tab, ...(showPanel === 'hand' ? styles.tabActive : {}) }}
+          onClick={() => setShowPanel(showPanel === 'hand' ? null : 'hand')}
+        >
+          🃏 Hand
+        </button>
+        <button
+          type="button"
+          style={{ ...styles.tab, ...(showPanel === 'log' ? styles.tabActive : {}) }}
+          onClick={() => setShowPanel(showPanel === 'log' ? null : 'log')}
+        >
+          📜 Log
+        </button>
       </div>
+
+      {showPanel && (
+        <div style={styles.panel}>
+          <div style={styles.panelContent}>
+            {showPanel === 'actions' && (
+              <>
+                {!gameState.setupPhase && (
+                  <>
+                    <DiceRoller
+                      onRoll={handleRollDice}
+                      rolling={diceRolling}
+                      disabled={gameState.phase !== 'roll' || !isMyTurn}
+                      result={gameState.dice}
+                    />
+                    <BuildMenu
+                      player={player}
+                      phase={gameState.phase}
+                      isMyTurn={isMyTurn}
+                      selectedAction={selectedAction}
+                      onSelectAction={setSelectedAction}
+                      onBuyDevCard={handleBuyDevCard}
+                      onPlayKnight={handlePlayKnight}
+                      onEndTurn={handleEndTurn}
+                      hasKnight={me.devCards.some(c => c.type === 'knight' && !c.played)}
+                    />
+                    <TradePanel
+                      gameState={gameState}
+                      isMyTurn={isMyTurn}
+                      onTrade={() => {
+                        addLog(`Trade offer from ${player.name}`);
+                        setGameState({ ...gameState });
+                      }}
+                    />
+                  </>
+                )}
+                {gameState.setupPhase && (
+                  <div style={styles.setupMsg}>
+                    {isMyTurn ? 'Place your pieces on the board' : 'AI is placing…'}
+                  </div>
+                )}
+              </>
+            )}
+            {showPanel === 'hand' && (
+              <>
+                <PlayerHand player={me} isMe />
+                {gameState.players.filter(p => p.color !== me.color).map(p => (
+                  <PlayerHand
+                    key={p.color}
+                    player={{
+                      ...p,
+                      _hidden: true,
+                      _resourceCount: (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
+                        .reduce((s, r) => s + (p.resources[r] || 0), 0),
+                      _devCardCount: p.devCards.filter(c => !c.played).length,
+                    }}
+                    isMe={false}
+                  />
+                ))}
+              </>
+            )}
+            {showPanel === 'log' && <GameLog log={log} />}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function SetupScreen({ onStart }: { onStart: (config: GameConfig) => void }) {
-  const [numPlayers, setNumPlayers] = useState(3);
+function SetupScreen({ onStart, onBack }: { onStart: (config: GameConfig) => void; onBack?: () => void }) {
+  const [numPlayers, setNumPlayers] = useState(4);
   const [names, setNames] = useState(['', '', '', '']);
-  const [aiPlayers, setAiPlayers] = useState<number[]>([]);
+  const [aiPlayers, setAiPlayers] = useState<number[]>([1, 2, 3]);
 
   return (
     <div style={styles.setupScreen}>
       <h1 style={styles.title}>🏝️ CATAN</h1>
-      <p style={styles.subtitle}>Settle the island with your family!</p>
-      
+      <p style={styles.subtitle}>Local game setup</p>
+
       <div style={styles.setupCard}>
         <label style={styles.label}>Number of Players</label>
         <div style={styles.playerCountRow}>
           {[2, 3, 4].map(n => (
             <button
               key={n}
+              type="button"
               style={{ ...styles.countBtn, ...(numPlayers === n ? styles.countBtnActive : {}) }}
-              onClick={() => setNumPlayers(n)}
+              onClick={() => {
+                setNumPlayers(n);
+                setAiPlayers(Array.from({ length: n - 1 }, (_, i) => i + 1));
+              }}
             >
               {n}
             </button>
@@ -296,7 +445,7 @@ function SetupScreen({ onStart }: { onStart: (config: GameConfig) => void }) {
             <div style={{ ...styles.colorDot, backgroundColor: ['red', 'blue', 'white', 'orange'][i] }} />
             <input
               style={styles.nameInput}
-              placeholder={`Player ${i + 1}`}
+              placeholder={i === 0 ? 'You' : `Player ${i + 1}`}
               value={names[i]}
               onChange={e => {
                 const n = [...names];
@@ -304,181 +453,129 @@ function SetupScreen({ onStart }: { onStart: (config: GameConfig) => void }) {
                 setNames(n);
               }}
             />
-            <label style={styles.aiCheckbox}>
-              <input
-                type="checkbox"
-                checked={aiPlayers.includes(i)}
-                onChange={e => {
-                  if (e.target.checked) setAiPlayers([...aiPlayers, i]);
-                  else setAiPlayers(aiPlayers.filter(a => a !== i));
-                }}
-              />
-              AI
-            </label>
+            {i > 0 && (
+              <label style={styles.aiCheckbox}>
+                <input
+                  type="checkbox"
+                  checked={aiPlayers.includes(i)}
+                  onChange={e => {
+                    if (e.target.checked) setAiPlayers([...aiPlayers, i]);
+                    else setAiPlayers(aiPlayers.filter(a => a !== i));
+                  }}
+                />
+                AI
+              </label>
+            )}
           </div>
         ))}
 
         <button
+          type="button"
           style={styles.startBtn}
           onClick={() => onStart({
             numPlayers,
-            playerNames: names.slice(0, numPlayers).map((n, i) => n || `Player ${i + 1}`),
+            playerNames: names.slice(0, numPlayers).map((n, i) => n || (i === 0 ? 'You' : `AI ${i + 1}`)),
             aiPlayers,
           })}
         >
           Start Game
         </button>
+        {onBack && (
+          <button type="button" style={styles.backBtn} onClick={onBack}>Back</button>
+        )}
       </div>
     </div>
   );
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  container: {
+  mobileContainer: {
     display: 'flex',
-    height: '100vh',
+    flexDirection: 'column',
+    height: '100dvh',
     background: '#1a1a2e',
     color: '#e0e0e0',
     fontFamily: 'Segoe UI, sans-serif',
     overflow: 'hidden',
   },
-  boardArea: {
-    flex: 1,
+  topBar: {
     display: 'flex',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20,
-    overflow: 'auto',
-  },
-  sidebar: {
-    width: 320,
-    background: '#16213e',
-    padding: 16,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 12,
-    overflowY: 'auto',
-    borderLeft: '1px solid #0f3460',
-  },
-  turnInfo: {
-    textAlign: 'center',
-    padding: 12,
+    padding: '8px 12px',
     background: '#0f3460',
-    borderRadius: 8,
-  },
-  turnBadge: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    padding: '4px 12px',
-    border: '2px solid',
-    borderRadius: 6,
-    display: 'inline-block',
-  },
-  phaseLabel: {
-    fontSize: 13,
-    color: '#8890a0',
-    marginTop: 4,
-    textTransform: 'uppercase',
-  },
-  setupHint: {
-    fontSize: 13,
-    color: '#ffd700',
-    marginTop: 8,
-    fontStyle: 'italic',
-  },
-  setupScreen: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: '100vh',
-    background: '#1a1a2e',
-    color: '#e0e0e0',
-    padding: 20,
-  },
-  title: {
-    fontSize: 48,
-    color: '#ffd700',
-    margin: 0,
-    textShadow: '0 0 20px rgba(255,215,0,0.3)',
-  },
-  subtitle: {
-    fontSize: 16,
-    color: '#8890a0',
-    marginBottom: 30,
-  },
-  setupCard: {
-    background: '#16213e',
-    borderRadius: 12,
-    padding: 24,
-    width: '100%',
-    maxWidth: 400,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 16,
-  },
-  label: {
-    fontSize: 14,
-    color: '#8890a0',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  playerCountRow: {
-    display: 'flex',
-    gap: 8,
-  },
-  countBtn: {
-    flex: 1,
-    padding: 12,
-    border: '2px solid #0f3460',
-    borderRadius: 8,
-    background: '#1a1a2e',
-    color: '#e0e0e0',
-    fontSize: 20,
-    fontWeight: 'bold',
-    cursor: 'pointer',
-  },
-  countBtnActive: {
-    borderColor: '#ffd700',
-    background: '#0f3460',
-  },
-  playerRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-  },
-  colorDot: {
-    width: 16,
-    height: 16,
-    borderRadius: '50%',
     flexShrink: 0,
   },
+  turnInfo: { display: 'flex', alignItems: 'center', gap: 8 },
+  turnDot: { width: 10, height: 10, borderRadius: '50%', flexShrink: 0 },
+  turnName: { fontSize: 14, fontWeight: 'bold' },
+  youTag: { fontSize: 12, color: '#2ecc71' },
+  phaseTag: {
+    fontSize: 11, color: '#8890a0', textTransform: 'uppercase',
+    background: '#1a1a2e', padding: '2px 6px', borderRadius: 4,
+  },
+  topActions: { display: 'flex', alignItems: 'center', gap: 8 },
+  diceResult: { fontSize: 14, fontWeight: 'bold', color: '#ffd700' },
+  leaveBtn: {
+    padding: '4px 10px', border: '1px solid #e74c3c', borderRadius: 6,
+    background: 'transparent', color: '#e74c3c', cursor: 'pointer', fontSize: 16, fontWeight: 'bold',
+  },
+  boardArea: {
+    flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
+  },
+  setupHintBar: {
+    textAlign: 'center', color: '#ffd700', fontSize: 13, fontWeight: 'bold',
+    padding: '8px 12px', background: 'rgba(0,0,0,0.55)',
+  },
+  tabBar: {
+    display: 'flex', background: '#0f3460', borderTop: '1px solid #1a1a2e', flexShrink: 0,
+  },
+  tab: {
+    flex: 1, padding: '10px 4px', border: 'none', background: 'transparent',
+    color: '#8890a0', fontSize: 12, fontWeight: 'bold', cursor: 'pointer',
+  },
+  tabActive: { color: '#ffd700', borderBottom: '2px solid #ffd700' },
+  panel: {
+    maxHeight: '42vh', overflow: 'hidden', background: '#16213e',
+    borderTop: '1px solid #0f3460', flexShrink: 0,
+  },
+  panelContent: {
+    padding: 12, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8,
+  },
+  setupMsg: { textAlign: 'center', color: '#8890a0', fontSize: 14, padding: 16 },
+  setupScreen: {
+    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+    minHeight: '100dvh', background: '#1a1a2e', color: '#e0e0e0', padding: 20,
+  },
+  title: {
+    fontSize: 40, color: '#ffd700', margin: 0, textShadow: '0 0 20px rgba(255,215,0,0.3)',
+  },
+  subtitle: { fontSize: 15, color: '#8890a0', marginBottom: 24 },
+  setupCard: {
+    background: '#16213e', borderRadius: 12, padding: 24, width: '100%', maxWidth: 400,
+    display: 'flex', flexDirection: 'column', gap: 14,
+  },
+  label: { fontSize: 13, color: '#8890a0', textTransform: 'uppercase', letterSpacing: 1 },
+  playerCountRow: { display: 'flex', gap: 8 },
+  countBtn: {
+    flex: 1, padding: 12, border: '2px solid #0f3460', borderRadius: 8,
+    background: '#1a1a2e', color: '#e0e0e0', fontSize: 18, fontWeight: 'bold', cursor: 'pointer',
+  },
+  countBtnActive: { borderColor: '#ffd700', background: '#0f3460' },
+  playerRow: { display: 'flex', alignItems: 'center', gap: 8 },
+  colorDot: { width: 14, height: 14, borderRadius: '50%', flexShrink: 0 },
   nameInput: {
-    flex: 1,
-    padding: '8px 12px',
-    border: '1px solid #0f3460',
-    borderRadius: 6,
-    background: '#1a1a2e',
-    color: '#e0e0e0',
-    fontSize: 14,
+    flex: 1, padding: '8px 12px', border: '1px solid #0f3460', borderRadius: 6,
+    background: '#1a1a2e', color: '#e0e0e0', fontSize: 14,
   },
-  aiCheckbox: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 4,
-    fontSize: 13,
-    color: '#8890a0',
-    cursor: 'pointer',
-  },
+  aiCheckbox: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, color: '#8890a0' },
   startBtn: {
-    padding: '14px 24px',
-    border: 'none',
-    borderRadius: 8,
+    padding: '14px 24px', border: 'none', borderRadius: 8,
     background: 'linear-gradient(135deg, #e94560, #c23152)',
-    color: 'white',
-    fontSize: 18,
-    fontWeight: 'bold',
-    cursor: 'pointer',
-    marginTop: 8,
+    color: 'white', fontSize: 17, fontWeight: 'bold', cursor: 'pointer',
+  },
+  backBtn: {
+    padding: '10px', border: '1px solid #0f3460', borderRadius: 8,
+    background: 'transparent', color: '#8890a0', cursor: 'pointer',
   },
 };
