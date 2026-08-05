@@ -44,41 +44,39 @@ export default function TradePanel({ gameState, isMyTurn }: TradePanelProps) {
         style={styles.toggleBtn}
         onClick={() => setShowTrade(!showTrade)}
       >
-        {showTrade ? '▼ Trade' : '▶ Trade'}
+        {showTrade ? '▼' : '▶'} Trade
       </button>
       {showTrade && (
         <div style={styles.panel}>
-          <div style={styles.section}>
+          <div style={styles.row}>
             <div style={styles.label}>Give</div>
-            <div style={styles.resourceRow}>
+            <div style={styles.resRow}>
               {RESOURCE_NAMES.map((r, i) => (
                 <button
                   key={r}
                   style={styles.resBtn}
                   onClick={() => setGive({ [r]: (give[r] || 0) + 1 })}
                 >
-                  {RESOURCE_ICONS[i]}
-                  {give[r] || 0}
+                  {RESOURCE_ICONS[i]} {give[r] || 0}
                 </button>
               ))}
             </div>
           </div>
-          <div style={styles.section}>
+          <div style={styles.row}>
             <div style={styles.label}>Want</div>
-            <div style={styles.resourceRow}>
+            <div style={styles.resRow}>
               {RESOURCE_NAMES.map((r, i) => (
                 <button
                   key={r}
                   style={styles.resBtn}
                   onClick={() => setWant({ [r]: (want[r] || 0) + 1 })}
                 >
-                  {RESOURCE_ICONS[i]}
-                  {want[r] || 0}
+                  {RESOURCE_ICONS[i]} {want[r] || 0}
                 </button>
               ))}
             </div>
           </div>
-          <div style={styles.section}>
+          <div style={styles.row}>
             <div style={styles.label}>With</div>
             <select
               style={styles.select}
@@ -112,11 +110,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   toggleBtn: {
     width: '100%',
-    padding: '8px 12px',
+    padding: '10px 12px',
     border: 'none',
     background: 'transparent',
     color: '#e0e0e0',
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: 'bold',
     cursor: 'pointer',
     textAlign: 'left',
@@ -127,41 +125,42 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     gap: 8,
   },
-  section: {},
+  row: {},
   label: {
     fontSize: 11,
     color: '#8890a0',
     marginBottom: 4,
   },
-  resourceRow: {
+  resRow: {
     display: 'flex',
     gap: 4,
+    flexWrap: 'wrap',
   },
   resBtn: {
-    padding: '4px 8px',
+    padding: '6px 10px',
     border: '1px solid #1a1a2e',
-    borderRadius: 4,
+    borderRadius: 6,
     background: '#1a1a2e',
     color: '#e0e0e0',
     cursor: 'pointer',
-    fontSize: 12,
+    fontSize: 13,
   },
   select: {
     width: '100%',
-    padding: '6px 8px',
+    padding: '8px 10px',
     border: '1px solid #1a1a2e',
-    borderRadius: 4,
+    borderRadius: 6,
     background: '#1a1a2e',
     color: '#e0e0e0',
-    fontSize: 12,
+    fontSize: 13,
   },
   tradeBtn: {
-    padding: '8px 12px',
+    padding: '10px 12px',
     border: 'none',
     borderRadius: 6,
     background: 'linear-gradient(135deg, #3498db, #2980b9)',
     color: 'white',
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: 'bold',
     cursor: 'pointer',
   },

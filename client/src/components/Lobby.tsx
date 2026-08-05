@@ -12,7 +12,7 @@ export default function Lobby() {
       <div style={styles.container}>
         <h1 style={styles.title}>🏝️ CATAN</h1>
         <p style={styles.subtitle}>Connecting to server...</p>
-        <div style={styles.loading}>⏳</div>
+        <div style={styles.spinner}>⏳</div>
       </div>
     );
   }
@@ -24,7 +24,6 @@ export default function Lobby() {
 
     return (
       <div style={styles.container}>
-        <h1 style={styles.title}>🏝️ CATAN</h1>
         <div style={styles.roomCard}>
           <div style={styles.roomHeader}>
             <span style={styles.roomCode}>Room: {room.id}</span>
@@ -42,7 +41,7 @@ export default function Lobby() {
                   {p.playerId === room.hostId && ' 👑'}
                 </span>
                 <span style={p.ready ? styles.readyBadge : styles.notReadyBadge}>
-                  {p.ready ? '✅ Ready' : '⏳'}
+                  {p.ready ? '✅' : '⏳'}
                 </span>
                 {isHost && p.isAI && (
                   <button style={styles.removeBtn} onClick={() => removeAI(p.playerId)}>✕</button>
@@ -53,12 +52,12 @@ export default function Lobby() {
 
           <div style={styles.actions}>
             <button style={styles.readyBtn} onClick={toggleReady}>
-              {room.players.find(p => p.playerId === playerId)?.ready ? 'Unready' : 'Ready'}
+              {room.players.find(p => p.playerId === playerId)?.ready ? 'Not Ready' : 'Ready'}
             </button>
             {isHost && (
               <>
                 <button style={styles.aiBtn} onClick={addAI} disabled={room.players.length >= 4}>
-                  + Add AI
+                  + AI
                 </button>
                 <button
                   style={{ ...styles.startBtn, ...(!canStart ? styles.disabledBtn : {}) }}
@@ -126,26 +125,25 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: '100vh',
+    minHeight: '100dvh',
     background: '#1a1a2e',
     color: '#e0e0e0',
     fontFamily: 'Segoe UI, sans-serif',
     padding: 20,
   },
   title: {
-    fontSize: 48,
+    fontSize: 40,
     color: '#ffd700',
     margin: 0,
     textShadow: '0 0 20px rgba(255,215,0,0.3)',
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 15,
     color: '#8890a0',
-    marginBottom: 30,
+    marginBottom: 24,
   },
-  loading: {
-    fontSize: 48,
-    animation: 'float 2s ease infinite',
+  spinner: {
+    fontSize: 40,
   },
   card: {
     background: '#16213e',
@@ -160,7 +158,7 @@ const styles: Record<string, React.CSSProperties> = {
   roomCard: {
     background: '#16213e',
     borderRadius: 12,
-    padding: 24,
+    padding: 20,
     width: '100%',
     maxWidth: 400,
   },
@@ -168,39 +166,39 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   roomCode: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: 'bold',
     color: '#ffd700',
-    letterSpacing: 3,
+    letterSpacing: 4,
   },
   shareHint: {
     fontSize: 13,
     color: '#8890a0',
-    marginBottom: 16,
+    marginBottom: 14,
   },
   leaveBtn: {
-    padding: '6px 12px',
+    padding: '6px 14px',
     border: '1px solid #e74c3c',
     borderRadius: 6,
     background: 'transparent',
     color: '#e74c3c',
     cursor: 'pointer',
-    fontSize: 12,
+    fontSize: 13,
   },
   playerList: {
     display: 'flex',
     flexDirection: 'column',
     gap: 8,
-    marginBottom: 16,
+    marginBottom: 14,
   },
   playerRow: {
     display: 'flex',
     alignItems: 'center',
     gap: 8,
-    padding: '8px 12px',
+    padding: '10px 12px',
     background: '#0f3460',
     borderRadius: 8,
   },
@@ -212,25 +210,24 @@ const styles: Record<string, React.CSSProperties> = {
   },
   playerName: {
     flex: 1,
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: 'bold',
   },
   readyBadge: {
-    fontSize: 12,
-    color: '#2ecc71',
+    fontSize: 16,
   },
   notReadyBadge: {
-    fontSize: 12,
+    fontSize: 16,
     color: '#8890a0',
   },
   removeBtn: {
-    padding: '2px 6px',
+    padding: '2px 8px',
     border: 'none',
     borderRadius: 4,
     background: '#e74c3c',
     color: 'white',
     cursor: 'pointer',
-    fontSize: 11,
+    fontSize: 12,
   },
   actions: {
     display: 'flex',
@@ -239,34 +236,34 @@ const styles: Record<string, React.CSSProperties> = {
   },
   readyBtn: {
     flex: 1,
-    padding: '10px 16px',
+    padding: '12px 16px',
     border: 'none',
-    borderRadius: 6,
+    borderRadius: 8,
     background: 'linear-gradient(135deg, #3498db, #2980b9)',
     color: 'white',
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: 'bold',
     cursor: 'pointer',
+    minWidth: 80,
   },
   aiBtn: {
-    flex: 1,
-    padding: '10px 16px',
+    padding: '12px 16px',
     border: '1px solid #e67e22',
-    borderRadius: 6,
+    borderRadius: 8,
     background: 'transparent',
     color: '#e67e22',
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: 'bold',
     cursor: 'pointer',
   },
   startBtn: {
     width: '100%',
-    padding: '12px 16px',
+    padding: '14px 16px',
     border: 'none',
-    borderRadius: 6,
+    borderRadius: 8,
     background: 'linear-gradient(135deg, #2ecc71, #27ae60)',
     color: 'white',
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: 'bold',
     cursor: 'pointer',
     marginTop: 4,
@@ -276,9 +273,9 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'not-allowed',
   },
   input: {
-    padding: '10px 14px',
+    padding: '12px 14px',
     border: '1px solid #0f3460',
-    borderRadius: 6,
+    borderRadius: 8,
     background: '#1a1a2e',
     color: '#e0e0e0',
     fontSize: 16,
@@ -286,22 +283,22 @@ const styles: Record<string, React.CSSProperties> = {
     letterSpacing: 1,
   },
   primaryBtn: {
-    padding: '12px 20px',
+    padding: '14px 20px',
     border: 'none',
-    borderRadius: 6,
+    borderRadius: 8,
     background: 'linear-gradient(135deg, #e94560, #c23152)',
     color: 'white',
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: 'bold',
     cursor: 'pointer',
   },
   secondaryBtn: {
-    padding: '10px 16px',
+    padding: '12px 16px',
     border: '1px solid #0f3460',
-    borderRadius: 6,
+    borderRadius: 8,
     background: 'transparent',
     color: '#8890a0',
-    fontSize: 14,
+    fontSize: 15,
     cursor: 'pointer',
   },
 };

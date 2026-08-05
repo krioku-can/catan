@@ -28,15 +28,13 @@ export default function PlayerHand({ player }: PlayerHandProps) {
           </div>
         ))}
       </div>
-      {player.devCards.length > 0 && (
-        <div style={styles.devCards}>
-          <span style={styles.devLabel}>Dev Cards: {player.devCards.filter(c => !c.played).length} unplayed</span>
-        </div>
-      )}
-      <div style={styles.pieces}>
+      <div style={styles.footer}>
         <span>🏘️ {player.settlementsRemaining}</span>
         <span>🏙️ {player.citiesRemaining}</span>
         <span>🛣️ {player.roadsRemaining}</span>
+        {player.devCards.filter(c => !c.played).length > 0 && (
+          <span>📜 {player.devCards.filter(c => !c.played).length}</span>
+        )}
       </div>
     </div>
   );
@@ -46,32 +44,33 @@ const styles: Record<string, React.CSSProperties> = {
   container: {
     background: '#0f3460',
     borderRadius: 8,
-    padding: 12,
+    padding: 10,
   },
   header: {
     display: 'flex',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 8,
+    gap: 6,
+    marginBottom: 6,
   },
   colorDot: {
-    width: 12,
-    height: 12,
+    width: 10,
+    height: 10,
     borderRadius: '50%',
+    flexShrink: 0,
   },
   name: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: 'bold',
     flex: 1,
   },
   vp: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#ffd700',
     fontWeight: 'bold',
   },
   resources: {
     display: 'flex',
-    gap: 6,
+    gap: 4,
     flexWrap: 'wrap',
   },
   resource: {
@@ -83,27 +82,19 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '2px 6px',
   },
   icon: {
-    fontSize: 14,
+    fontSize: 13,
   },
   count: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: 'bold',
-    minWidth: 12,
+    minWidth: 10,
     textAlign: 'center',
   },
-  devCards: {
-    marginTop: 6,
-    fontSize: 12,
-    color: '#8890a0',
-  },
-  devLabel: {
-    fontSize: 12,
-  },
-  pieces: {
+  footer: {
     display: 'flex',
-    gap: 12,
+    gap: 8,
     marginTop: 6,
-    fontSize: 12,
+    fontSize: 11,
     color: '#8890a0',
   },
 };

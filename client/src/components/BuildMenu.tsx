@@ -13,10 +13,10 @@ interface BuildMenuProps {
 }
 
 const BUILD_OPTIONS = [
-  { id: 'road', label: '🛣️ Road', cost: '1🪵 1🧱' },
-  { id: 'settlement', label: '🏘️ Settlement', cost: '1🪵 1🧱 1🐑 1🌾' },
-  { id: 'city', label: '🏙️ City', cost: '2🌾 3⛏️' },
-  { id: 'devcard', label: '📜 Dev Card', cost: '1🐑 1🌾 1⛏️' },
+  { id: 'road', label: '🛣️', name: 'Road', cost: '🪵🧱' },
+  { id: 'settlement', label: '🏘️', name: 'Settlement', cost: '🪵🧱🐑🌾' },
+  { id: 'city', label: '🏙️', name: 'City', cost: '🌾🌾⛏️⛏️⛏️' },
+  { id: 'devcard', label: '📜', name: 'Dev Card', cost: '🐑🌾⛏️' },
 ];
 
 export default function BuildMenu({ player, phase, isMyTurn, selectedAction, onSelectAction, onBuyDevCard, onPlayKnight, onEndTurn, hasKnight }: BuildMenuProps) {
@@ -24,7 +24,6 @@ export default function BuildMenu({ player, phase, isMyTurn, selectedAction, onS
 
   return (
     <div style={styles.container}>
-      <div style={styles.header}>Build</div>
       <div style={styles.grid}>
         {BUILD_OPTIONS.map(opt => {
           const isSelected = selectedAction === opt.id;
@@ -47,40 +46,36 @@ export default function BuildMenu({ player, phase, isMyTurn, selectedAction, onS
               }}
               disabled={!isMyTurn}
             >
-              <div style={styles.btnLabel}>{opt.label}</div>
+              <div style={styles.btnIcon}>{opt.label}</div>
+              <div style={styles.btnName}>{opt.name}</div>
               <div style={styles.btnCost}>{opt.cost}</div>
             </button>
           );
         })}
       </div>
-      {hasKnight && isMyTurn && (
-        <button style={styles.knightBtn} onClick={onPlayKnight}>
-          ⚔️ Play Knight ({player.playedKnights} played)
+      <div style={styles.actions}>
+        {hasKnight && isMyTurn && (
+          <button style={styles.knightBtn} onClick={onPlayKnight}>
+            ⚔️ Knight ({player.playedKnights})
+          </button>
+        )}
+        <button
+          style={styles.endTurnBtn}
+          onClick={onEndTurn}
+          disabled={!isMyTurn}
+        >
+          End Turn
         </button>
-      )}
-      <button
-        style={styles.endTurnBtn}
-        onClick={onEndTurn}
-        disabled={!isMyTurn}
-      >
-        End Turn
-      </button>
+      </div>
     </div>
   );
 }
 
 const styles: Record<string, React.CSSProperties> = {
   container: {
-    background: '#0f3460',
-    borderRadius: 8,
-    padding: 12,
-  },
-  header: {
-    fontSize: 13,
-    color: '#8890a0',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginBottom: 8,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
   },
   grid: {
     display: 'grid',
@@ -88,9 +83,9 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 6,
   },
   buildBtn: {
-    padding: '8px 6px',
+    padding: '10px 6px',
     border: '1px solid #1a1a2e',
-    borderRadius: 6,
+    borderRadius: 8,
     background: '#1a1a2e',
     color: '#e0e0e0',
     cursor: 'pointer',
@@ -100,42 +95,49 @@ const styles: Record<string, React.CSSProperties> = {
   buildBtnSelected: {
     borderColor: '#ffd700',
     background: '#16213e',
+    boxShadow: '0 0 8px rgba(255,215,0,0.3)',
   },
   buildBtnDisabled: {
-    opacity: 0.4,
+    opacity: 0.3,
     cursor: 'not-allowed',
   },
-  btnLabel: {
-    fontSize: 13,
+  btnIcon: {
+    fontSize: 22,
+    marginBottom: 2,
+  },
+  btnName: {
+    fontSize: 12,
     fontWeight: 'bold',
   },
   btnCost: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#8890a0',
     marginTop: 2,
   },
+  actions: {
+    display: 'flex',
+    gap: 6,
+  },
   knightBtn: {
-    width: '100%',
-    padding: '8px 12px',
+    flex: 1,
+    padding: '10px 12px',
     border: '1px solid #e67e22',
-    borderRadius: 6,
+    borderRadius: 8,
     background: '#1a1a2e',
     color: '#e67e22',
     cursor: 'pointer',
     fontSize: 13,
     fontWeight: 'bold',
-    marginTop: 6,
   },
   endTurnBtn: {
-    width: '100%',
+    flex: 2,
     padding: '10px 16px',
     border: 'none',
-    borderRadius: 6,
+    borderRadius: 8,
     background: 'linear-gradient(135deg, #2ecc71, #27ae60)',
     color: 'white',
     fontSize: 14,
     fontWeight: 'bold',
     cursor: 'pointer',
-    marginTop: 8,
   },
 };

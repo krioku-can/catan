@@ -7,13 +7,14 @@ import DiceRoller from './DiceRoller';
 import TradePanel from './TradePanel';
 import BuildMenu from './BuildMenu';
 
-const HEX_SIZE = 55;
+const HEX_SIZE = 50;
 
 export default function OnlineGame() {
   const { gameState, playerId, room, sendAction, sendChat, chatMessages, leaveRoom } = useSocket();
   const [selectedAction, setSelectedAction] = useState<string | null>(null);
   const [robberMode, setRobberMode] = useState(false);
   const [chatInput, setChatInput] = useState('');
+  const [showPanel, setShowPanel] = useState<'actions' | 'hand' | 'chat' | null>('actions');
 
   if (!gameState || !room) return null;
 
@@ -74,6 +75,27 @@ export default function OnlineGame() {
 
   return (
     <div style={styles.container}>
+      {/* Top bar */}
+      <div style={styles.topBar}>
+        <div style={styles.turnInfo}>
+          <div style={{ ...styles.turnDot, backgroundColor: player.color }} />
+          <span style={styles.turnName}>
+            {player.name}{player.isAI ? ' 🤖' : ''}
+            {isMyTurn ? <span style={styles.youTag}> (You)</span> : ''}
+          </span>
+          <span style={styles.phaseTag}>
+            {gameState.setupPhase ? 'Setup' : gameState.phase}
+          </span>
+        </div>
+        <div style={styles.topActions}>
+          {gameState.dice && (
+            <span style={styles.diceResult}>🎲 {gameState.dice[0]}+{gameState.dice[1]}</span>
+          )}
+          <button style={styles.leaveBtn} onClick={leaveRoom}>✕</button>
+        </div>
+      </div>
+
+      {/* Board */}
       <div style={styles.boardArea}>
         <Board
           gameState={gameState}
@@ -85,80 +107,117 @@ export default function OnlineGame() {
           selectedAction={selectedAction}
         />
       </div>
-      <div style={styles.sidebar}>
-        <div style={styles.turnInfo}>
-          <div style={{ ...styles.turnBadge, borderColor: player.color }}>
-            {player.name}'s Turn
-            {player.isAI && <span> 🤖</span>}
-            {isMyTurn && <span style={styles.youBadge}> (You)</span>}
-          </div>
-          <div style={styles.phaseLabel}>
-            Phase: {gameState.phase.replace('_', ' ')}
-          </div>
-          {gameState.setupPhase && (
-            <div style={styles.setupHint}>
-              {gameState.phase === 'setup_settlement' ? 'Click a hex corner to place a settlement' : 'Click an edge to place a road'}
+
+      {/* Setup hint */}
+      {gameState.setupPhase && (
+        <div style={styles.setupHint}>
+          {gameState.phase === 'setup_settlement'
+            ? '👆 Tap a hex corner to place a settlement'
+            : '👆 Tap an edge to place a road'}
+        </div>
+      )}
+
+      {/* Bottom tab bar */}
+      <div style={styles.tabBar}>
+        <button
+          style={{ ...styles.tab, ...(showPanel === 'actions' ? styles.tabActive : {}) }}
+          onClick={() => setShowPanel(showPanel === 'actions' ? null : 'actions')}
+        >
+          🎮 Actions
+        </button>
+        <button
+          style={{ ...styles.tab, ...(showPanel === 'hand' ? styles.tabActive : {}) }}
+          onClick={() => setShowPanel(showPanel === 'hand' ? null : 'hand')}
+        >
+          🃏 Hand
+        </button>
+        <button
+          style={{ ...styles.tab, ...(showPanel === 'chat' ? styles.tabActive : {}) }}
+          onClick={() => setShowPanel(showPanel === 'chat' ? null : 'chat')}
+        >
+          💬 Chat{chatMessages.length > 0 ? ` (${chatMessages.length})` : ''}
+        </button>
+      </div>
+
+      {/* Slide-up panel */}
+      {showPanel && (
+        <div style={styles.panel}>
+          {showPanel === 'actions' && (
+            <div style={styles.panelContent}>
+              {!gameState.setupPhase && (
+                <>
+                  <DiceRoller
+                    onRoll={handleRollDice}
+                    rolling={false}
+                    disabled={gameState.phase !== 'roll' || !isMyTurn}
+                    result={gameState.dice}
+                  />
+                  <BuildMenu
+                    player={player}
+                    phase={gameState.phase}
+                    isMyTurn={isMyTurn}
+                    selectedAction={selectedAction}
+                    onSelectAction={setSelectedAction}
+                    onBuyDevCard={handleBuyDevCard}
+                    onPlayKnight={handlePlayKnight}
+                    onEndTurn={handleEndTurn}
+                    hasKnight={player.devCards.some(c => c.type === 'knight' && !c.played)}
+                  />
+                  <TradePanel
+                    gameState={gameState}
+                    isMyTurn={isMyTurn}
+                    onTrade={() => {}}
+                  />
+                </>
+              )}
+              {gameState.setupPhase && (
+                <div style={styles.setupMsg}>
+                  Place your settlements and roads to start the game!
+                </div>
+              )}
+            </div>
+          )}
+
+          {showPanel === 'hand' && myPlayer && (
+            <div style={styles.panelContent}>
+              <PlayerHand player={myPlayer} />
+              {/* Other players */}
+              <div style={styles.otherPlayers}>
+                {gameState.players.filter(p => p.color !== myPlayer.color).map(p => (
+                  <PlayerHand key={p.color} player={p} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {showPanel === 'chat' && (
+            <div style={styles.panelContent}>
+              <div style={styles.chatMessages}>
+                {chatMessages.length === 0 && (
+                  <div style={styles.chatEmpty}>No messages yet</div>
+                )}
+                {chatMessages.slice(-20).map((msg, i) => (
+                  <div key={i} style={styles.chatMsg}>
+                    <span style={{ color: msg.playerColor, fontWeight: 'bold' }}>{msg.playerName}:</span>
+                    {' '}{msg.text}
+                  </div>
+                ))}
+              </div>
+              <div style={styles.chatInputRow}>
+                <input
+                  style={styles.chatInput}
+                  value={chatInput}
+                  onChange={e => setChatInput(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSendChat()}
+                  placeholder="Type a message..."
+                  maxLength={100}
+                />
+                <button style={styles.chatSendBtn} onClick={handleSendChat}>Send</button>
+              </div>
             </div>
           )}
         </div>
-
-        {!gameState.setupPhase && (
-          <>
-            <DiceRoller
-              onRoll={handleRollDice}
-              rolling={false}
-              disabled={gameState.phase !== 'roll' || !isMyTurn}
-              result={gameState.dice}
-            />
-
-            <BuildMenu
-              player={player}
-              phase={gameState.phase}
-              isMyTurn={isMyTurn}
-              selectedAction={selectedAction}
-              onSelectAction={setSelectedAction}
-              onBuyDevCard={handleBuyDevCard}
-              onPlayKnight={handlePlayKnight}
-              onEndTurn={handleEndTurn}
-              hasKnight={player.devCards.some(c => c.type === 'knight' && !c.played)}
-            />
-
-            <TradePanel
-              gameState={gameState}
-              isMyTurn={isMyTurn}
-              onTrade={() => {}}
-            />
-          </>
-        )}
-
-        {myPlayer && <PlayerHand player={myPlayer} />}
-
-        {/* Chat */}
-        <div style={styles.chatContainer}>
-          <div style={styles.chatHeader}>Chat</div>
-          <div style={styles.chatMessages}>
-            {chatMessages.slice(-10).map((msg, i) => (
-              <div key={i} style={styles.chatMsg}>
-                <span style={{ color: msg.playerColor, fontWeight: 'bold' }}>{msg.playerName}:</span>
-                {' '}{msg.text}
-              </div>
-            ))}
-          </div>
-          <div style={styles.chatInputRow}>
-            <input
-              style={styles.chatInput}
-              value={chatInput}
-              onChange={e => setChatInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSendChat()}
-              placeholder="Chat..."
-              maxLength={100}
-            />
-            <button style={styles.chatSendBtn} onClick={handleSendChat}>Send</button>
-          </div>
-        </div>
-
-        <button style={styles.leaveBtn} onClick={leaveRoom}>Leave Game</button>
-      </div>
+      )}
     </div>
   );
 }
@@ -166,115 +225,182 @@ export default function OnlineGame() {
 const styles: Record<string, React.CSSProperties> = {
   container: {
     display: 'flex',
-    height: '100vh',
+    flexDirection: 'column',
+    height: '100dvh',
     background: '#1a1a2e',
     color: '#e0e0e0',
     fontFamily: 'Segoe UI, sans-serif',
     overflow: 'hidden',
+    position: 'relative',
+  },
+  topBar: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '8px 12px',
+    background: '#0f3460',
+    zIndex: 10,
+    flexShrink: 0,
+  },
+  turnInfo: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+  },
+  turnDot: {
+    width: 10,
+    height: 10,
+    borderRadius: '50%',
+    flexShrink: 0,
+  },
+  turnName: {
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  youTag: {
+    fontSize: 12,
+    color: '#2ecc71',
+  },
+  phaseTag: {
+    fontSize: 11,
+    color: '#8890a0',
+    textTransform: 'uppercase',
+    background: '#1a1a2e',
+    padding: '2px 6px',
+    borderRadius: 4,
+  },
+  topActions: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+  },
+  diceResult: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#ffd700',
+  },
+  leaveBtn: {
+    padding: '4px 10px',
+    border: '1px solid #e74c3c',
+    borderRadius: 6,
+    background: 'transparent',
+    color: '#e74c3c',
+    cursor: 'pointer',
+    fontSize: 16,
+    fontWeight: 'bold',
+    lineHeight: 1,
   },
   boardArea: {
     flex: 1,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 20,
-    overflow: 'auto',
-  },
-  sidebar: {
-    width: 320,
-    background: '#16213e',
-    padding: 16,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 12,
-    overflowY: 'auto',
-    borderLeft: '1px solid #0f3460',
-  },
-  turnInfo: {
-    textAlign: 'center',
-    padding: 12,
-    background: '#0f3460',
-    borderRadius: 8,
-  },
-  turnBadge: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    padding: '4px 12px',
-    border: '2px solid',
-    borderRadius: 6,
-    display: 'inline-block',
-  },
-  youBadge: {
-    fontSize: 12,
-    color: '#2ecc71',
-  },
-  phaseLabel: {
-    fontSize: 13,
-    color: '#8890a0',
-    marginTop: 4,
-    textTransform: 'uppercase',
+    overflow: 'hidden',
+    position: 'relative',
   },
   setupHint: {
-    fontSize: 13,
+    position: 'absolute',
+    bottom: 100,
+    left: 0,
+    right: 0,
+    textAlign: 'center',
     color: '#ffd700',
-    marginTop: 8,
-    fontStyle: 'italic',
+    fontSize: 14,
+    fontWeight: 'bold',
+    padding: '8px 16px',
+    background: 'rgba(0,0,0,0.6)',
+    zIndex: 5,
   },
-  chatContainer: {
+  tabBar: {
+    display: 'flex',
     background: '#0f3460',
-    borderRadius: 8,
-    padding: 8,
+    borderTop: '1px solid #1a1a2e',
+    flexShrink: 0,
+    zIndex: 10,
+  },
+  tab: {
+    flex: 1,
+    padding: '10px 4px',
+    border: 'none',
+    background: 'transparent',
+    color: '#8890a0',
+    fontSize: 12,
+    fontWeight: 'bold',
+    cursor: 'pointer',
+    textAlign: 'center',
+    transition: 'color 0.15s',
+  },
+  tabActive: {
+    color: '#ffd700',
+    borderBottom: '2px solid #ffd700',
+  },
+  panel: {
+    maxHeight: '45vh',
+    overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
+    background: '#16213e',
+    borderTop: '1px solid #0f3460',
+    flexShrink: 0,
+  },
+  panelContent: {
+    padding: 12,
+    overflowY: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+  },
+  setupMsg: {
+    textAlign: 'center',
+    color: '#8890a0',
+    fontSize: 14,
+    padding: 20,
+  },
+  otherPlayers: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+    marginTop: 8,
+  },
+  chatMessages: {
+    maxHeight: 200,
+    overflowY: 'auto',
+    fontSize: 13,
     display: 'flex',
     flexDirection: 'column',
     gap: 4,
+    padding: 4,
   },
-  chatHeader: {
-    fontSize: 12,
+  chatEmpty: {
+    textAlign: 'center',
     color: '#8890a0',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  chatMessages: {
-    maxHeight: 100,
-    overflowY: 'auto',
-    fontSize: 12,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 2,
+    padding: 20,
   },
   chatMsg: {
-    lineHeight: 1.3,
+    lineHeight: 1.4,
   },
   chatInputRow: {
     display: 'flex',
-    gap: 4,
+    gap: 6,
+    marginTop: 4,
   },
   chatInput: {
     flex: 1,
-    padding: '4px 8px',
+    padding: '8px 12px',
     border: '1px solid #1a1a2e',
-    borderRadius: 4,
+    borderRadius: 8,
     background: '#1a1a2e',
     color: '#e0e0e0',
-    fontSize: 12,
+    fontSize: 14,
   },
   chatSendBtn: {
-    padding: '4px 8px',
+    padding: '8px 16px',
     border: 'none',
-    borderRadius: 4,
+    borderRadius: 8,
     background: '#3498db',
     color: 'white',
-    fontSize: 11,
-    cursor: 'pointer',
-  },
-  leaveBtn: {
-    padding: '8px 12px',
-    border: '1px solid #e74c3c',
-    borderRadius: 6,
-    background: 'transparent',
-    color: '#e74c3c',
-    cursor: 'pointer',
     fontSize: 13,
     fontWeight: 'bold',
+    cursor: 'pointer',
   },
 };
