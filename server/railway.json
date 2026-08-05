@@ -1,0 +1,5 @@
+{
+  "cron": null,
+  "healthcheckPath": "/api/health",
+  "rootDirectory": "server"
+}
