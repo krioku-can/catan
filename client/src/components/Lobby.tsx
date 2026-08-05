@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useSocket } from '../hooks/useSocket';
+import { getStored, setStored } from '../storage';
 
 export default function Lobby({ onBack }: { onBack?: () => void }) {
   const { connected, room, playerId, createRoom, joinRoom, toggleReady, addAI, removeAI, startGame, leaveRoom } = useSocket();
-  const [name, setName] = useState(() => localStorage.getItem('catan_name') || '');
+  const [name, setName] = useState(() => getStored('catan_name') || '');
   const [roomCode, setRoomCode] = useState('');
   const [showJoin, setShowJoin] = useState(false);
 
@@ -88,7 +89,7 @@ export default function Lobby({ onBack }: { onBack?: () => void }) {
           value={name}
           onChange={e => {
             setName(e.target.value);
-            localStorage.setItem('catan_name', e.target.value);
+            setStored('catan_name', e.target.value);
           }}
           maxLength={20}
         />

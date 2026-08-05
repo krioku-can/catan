@@ -3,6 +3,7 @@ import { SocketProvider, useSocket } from './hooks/useSocket';
 import Lobby from './components/Lobby';
 import OnlineGame from './components/OnlineGame';
 import Game from './components/Game';
+import { getStored, setStored } from './storage';
 
 type Mode = 'home' | 'local' | 'online';
 
@@ -13,11 +14,11 @@ function OnlineShell({ onBack }: { onBack: () => void }) {
 }
 
 function Home({ onPick }: { onPick: (m: Mode) => void }) {
-  const [name, setName] = useState(() => localStorage.getItem('catan_name') || '');
+  const [name, setName] = useState(() => getStored('catan_name') || '');
 
   const saveName = (n: string) => {
     setName(n);
-    localStorage.setItem('catan_name', n);
+    setStored('catan_name', n);
   };
 
   return (
@@ -56,7 +57,7 @@ function Home({ onPick }: { onPick: (m: Mode) => void }) {
 
 export default function App() {
   const [mode, setMode] = useState<Mode>('home');
-  const playerName = localStorage.getItem('catan_name') || 'You';
+  const playerName = getStored('catan_name') || 'You';
 
   if (mode === 'local') {
     return (
