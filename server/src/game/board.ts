@@ -1,7 +1,7 @@
 // Hex grid math for Catan
 // Uses axial coordinates (q, r) — see https://www.redblobgames.com/grids/hexagons/
 
-import { HexTile, HexType, Port, Intersection, Edge, ResourceType } from './types';
+import type { HexTile, HexType, Port, Intersection, Edge, ResourceType } from './types.js';
 
 // Standard Catan board: radius 2 (3 hexes across center)
 // Total: 1 (center) + 6 (ring 1) + 12 (ring 2) = 19 land hexes
@@ -172,7 +172,7 @@ export function generateBoard(): { tiles: HexTile[]; ports: Port[]; intersection
 
   tiles.forEach(tile => {
     const corners = getHexCorners(tile.q, tile.r);
-    corners.forEach((key, i) => {
+    corners.forEach((key) => {
       if (!intersections[key]) {
         const [cq, cr, cornerStr] = key.split(',');
         intersections[key] = {
@@ -279,7 +279,6 @@ export function getResourceProduction(
   roll: number,
   tiles: HexTile[],
   intersections: Record<string, Intersection>,
-  edges: Record<string, Edge>,
 ): Record<string, Partial<Record<ResourceType, number>>> {
   const production: Record<string, Partial<Record<ResourceType, number>>> = {};
 

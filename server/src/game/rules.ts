@@ -1,7 +1,9 @@
 // Core game rules and state management
 
-import { GameState, GameConfig, Player, PlayerColor, TurnPhase, ResourceType, RESOURCES, DevelopmentCard, HexTile, Intersection, Edge } from './types';
-import { generateBoard, canPlaceSettlement, canPlaceRoad, getResourceProduction, getAdjacentIntersections, getEdgesForIntersection } from './board';
+import type { GameState, GameConfig, Player, PlayerColor, ResourceType, DevelopmentCard, HexTile, Edge } from './types.js';
+import { generateBoard, canPlaceSettlement, canPlaceRoad, getResourceProduction, getAdjacentIntersections, getEdgesForIntersection } from './board.js';
+
+const RESOURCES: ResourceType[] = ['brick', 'lumber', 'wool', 'grain', 'ore'];
 
 const BUILDING_COSTS: Record<string, Partial<Record<ResourceType, number>>> = {
   road: { lumber: 1, brick: 1 },
@@ -157,7 +159,7 @@ export function rollDice(state: GameState): [number, number] {
   
   // Distribute resources
   if (total !== 7) {
-    const production = getResourceProduction(total, state.board, state.intersections, state.edges);
+    const production = getResourceProduction(total, state.board, state.intersections);
     for (const [color, resources] of Object.entries(production)) {
       const player = getPlayerByColor(state, color as PlayerColor);
       addResources(player, resources);
@@ -184,9 +186,9 @@ export function moveRobber(state: GameState, targetHexQ: number, targetHexR: num
   // Steal a random resource from a player with settlements on this hex
   if (stealFrom) {
     const target = getPlayerByColor(state, stealFrom);
-    const hasResources = RESOURCES.some(r => (target.resources[r] || 0) > 0);
+    const hasResources = RESOURCES.some((r: ResourceType) => (target.resources[r] || 0) > 0);
     if (hasResources) {
-      const available = RESOURCES.filter(r => (target.resources[r] || 0) > 0);
+      const available = RESOURCES.filter((r: ResourceType) => (target.resources[r] || 0) > 0);
       const stolen = available[Math.floor(Math.random() * available.length)];
       target.resources[stolen]--;
       getCurrentPlayer(state).resources[stolen]++;
@@ -353,7 +355,6 @@ export function advanceSetup(state: GameState): void {
   }
 
   // Determine whose turn and what phase
-  const actionsPerPlayer = 4; // settlement, road, settlement, road
   const playerIndex = Math.floor(state.setupRound / 2) % state.players.length;
   const actionInRound = state.setupRound % 2;
   
@@ -499,7 +500,6 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
   if (state.phase === 'build') {
     // Try to build something
     // Priority: city > settlement > dev card > road
-    const actions: { action: string; cost: Partial<Record<ResourceType, number>>; data?: any }[] = [];
 
     // Check cities
     const citySpots = Object.values(state.intersections)

@@ -3,7 +3,7 @@ import http from 'http';
 import cors from 'cors';
 import { Server } from 'socket.io';
 import { v4 as uuidv4 } from 'uuid';
-import { GameState, GameConfig, PlayerColor, ResourceType } from './game/types.js';
+import type { GameState, GameConfig, PlayerColor, ResourceType } from './game/types.js';
 import { createInitialState, getCurrentPlayer, rollDice, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight } from './game/rules.js';
 import { getHexCorners } from './game/board.js';
 
