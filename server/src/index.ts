@@ -40,6 +40,43 @@ function generateRoomCode(): string {
 
 const COLORS: PlayerColor[] = ['red', 'blue', 'white', 'orange'];
 
+/** Hide other players' cards/resources — only counts are public */
+function sanitizeGameStateForPlayer(gs: GameState, viewerColor: PlayerColor | null): GameState {
+  return {
+    ...gs,
+    players: gs.players.map(p => {
+      if (viewerColor && p.color === viewerColor) return p;
+      const totalResources = (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
+        .reduce((sum, r) => sum + (p.resources[r] || 0), 0);
+      const hiddenDev = p.devCards.filter(c => !c.played).length;
+      return {
+        ...p,
+        resources: { brick: 0, lumber: 0, wool: 0, grain: 0, ore: 0 },
+        // Encode total card count in a private field consumers already know via totalResources helper
+        // We stash total in lumber as a single public count channel? No — add explicit public fields via cast
+        devCards: Array.from({ length: hiddenDev }, () => ({ type: 'knight' as const, played: false })),
+        // Mark hidden so client shows backs only
+        _hidden: true,
+        _resourceCount: totalResources,
+        _devCardCount: hiddenDev,
+      } as typeof p & { _hidden: boolean; _resourceCount: number; _devCardCount: number };
+    }),
+  };
+}
+
+function emitGameToRoom(room: Room, action?: string, result?: unknown) {
+  if (!room.gameState) return;
+  for (const conn of room.players) {
+    if (conn.isAI || !conn.socketId) continue;
+    const payload = {
+      gameState: sanitizeGameStateForPlayer(room.gameState, conn.color),
+      ...(action !== undefined ? { action, result } : {}),
+    };
+    io.to(conn.socketId).emit(action === undefined ? 'game_started' : 'game_update',
+      action === undefined ? { gameState: payload.gameState } : payload);
+  }
+}
+
 // ── Express Setup ──
 
 const app = express();
@@ -203,7 +240,7 @@ io.on('connection', (socket) => {
     room.gameState = createInitialState(config);
     console.log(`[game] Started in ${roomCode} with ${room.players.length} players`);
 
-    io.to(roomCode).emit('game_started', { gameState: room.gameState });
+    emitGameToRoom(room);
   });
 
   // ── Game Actions ──
@@ -322,7 +359,7 @@ io.on('connection', (socket) => {
     }
 
     if (result !== null) {
-      io.to(roomCode).emit('game_update', { gameState: gs, action, result });
+      emitGameToRoom(room, action, result);
 
       // Check for AI turns
       setTimeout(() => {
@@ -395,16 +432,12 @@ function runAITurn(room: Room) {
   switch (action.action) {
     case 'roll_dice': {
       const [d1, d2] = rollDice(gs);
-      io.to(room.id).emit('game_update', {
-        gameState: gs,
-        action: 'roll_dice',
-        result: { dice: [d1, d2], total: d1 + d2 },
-      });
+      emitGameToRoom(room, 'roll_dice', { dice: [d1, d2], total: d1 + d2 });
       break;
     }
     case 'skip_trade': {
       gs.phase = 'build';
-      io.to(room.id).emit('game_update', { gameState: gs, action: 'skip_trade', result: { success: true } });
+      emitGameToRoom(room, 'skip_trade', { success: true });
       break;
     }
     case 'place_settlement':
@@ -412,7 +445,7 @@ function runAITurn(room: Room) {
     case 'place_city':
     case 'buy_dev_card':
     case 'end_turn': {
-      io.to(room.id).emit('game_update', { gameState: gs, action: action.action, result: { success: true } });
+      emitGameToRoom(room, action.action, { success: true });
       break;
     }
   }

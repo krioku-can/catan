@@ -180,11 +180,10 @@ export default function OnlineGame() {
 
           {showPanel === 'hand' && myPlayer && (
             <div style={styles.panelContent}>
-              <PlayerHand player={myPlayer} />
-              {/* Other players */}
+              <PlayerHand player={myPlayer} isMe />
               <div style={styles.otherPlayers}>
                 {gameState.players.filter(p => p.color !== myPlayer.color).map(p => (
-                  <PlayerHand key={p.color} player={p} />
+                  <PlayerHand key={p.color} player={p} isMe={false} />
                 ))}
               </div>
             </div>
