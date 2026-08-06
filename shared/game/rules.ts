@@ -460,10 +460,17 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
       }
     }
     if (state.phase === 'setup_road') {
+      // The road MUST connect to the settlement the AI just placed. Pick an
+      // empty edge adjacent to one of the AI's own settlements.
+      const myKeys = new Set(
+        Object.values(state.intersections)
+          .filter(i => i.owner === player.color && i.building === 'settlement')
+          .map(i => i.key)
+      );
       const validEdges = Object.values(state.edges)
-        .filter(e => !e.road)
+        .filter(e => !e.road && (myKeys.has(e.from) || myKeys.has(e.to)))
         .map(e => e.key);
-      
+
       if (validEdges.length > 0) {
         const pick = validEdges[Math.floor(Math.random() * validEdges.length)];
         return { action: 'place_road', data: { key: pick } };
