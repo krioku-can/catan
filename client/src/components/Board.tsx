@@ -441,11 +441,29 @@ export default function Board({
     }
 
     Object.values(gameState.edges).forEach((edge: Edge) => {
-      if (!edge.road) return;
       const a = positions.get(edge.from);
       const b = positions.get(edge.to);
       if (!a || !b) return;
-      drawRoad(ctx, a.x + W / 2, a.y + H / 2, b.x + W / 2, b.y + H / 2, PLAYER_COLORS[edge.road] || '#666', hexSize);
+      const ax = a.x + W / 2, ay = a.y + H / 2;
+      const bx = b.x + W / 2, by = b.y + H / 2;
+      // Highlight empty edges when a road is being placed, so they're tappable.
+      const placingRoad = gameState.setupPhase
+        ? gameState.phase === 'setup_road'
+        : gameState.phase === 'build' && selectedAction === 'road';
+      if (!edge.road && placingRoad) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+        ctx.lineWidth = Math.max(8, hexSize * 0.18);
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(bx, by);
+        ctx.stroke();
+        ctx.restore();
+      }
+      if (edge.road) {
+        drawRoad(ctx, ax, ay, bx, by, PLAYER_COLORS[edge.road] || '#666', hexSize);
+      }
     });
 
     Object.values(gameState.intersections).forEach((inter: Intersection) => {
