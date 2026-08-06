@@ -449,14 +449,33 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
   // During setup
   if (state.setupPhase) {
     if (state.phase === 'setup_settlement') {
-      // Find valid settlement spots
-      const validKeys = Object.values(state.intersections)
-        .filter(i => !i.building)
-        .map(i => i.key);
-      
-      if (validKeys.length > 0) {
-        const pick = validKeys[Math.floor(Math.random() * validKeys.length)];
-        return { action: 'place_settlement', data: { key: pick } };
+      // Score each free corner by the resource value of adjacent hexes.
+      // Brick & ore are the bottlenecks so weight them highest. This stops the
+      // AI from placing both settlements on spots with zero brick/ore, which
+      // deadlocked games.
+      const candidates: { key: string; score: number }[] = [];
+      Object.values(state.intersections).forEach(inter => {
+        if (inter.building) return;
+        if (state.setupRound > 0) {
+          const adjacent = getAdjacentIntersections(inter.key, state.edges);
+          if (adjacent.some(a => state.intersections[a]?.building)) return;
+        }
+        const hexes = getAdjacentHexes(inter.key, state.board);
+        let score = 0;
+        hexes.forEach(h => {
+          if (h.type === 'desert' || h.type === 'water') return;
+          const w = h.type === 'brick' ? 3 : h.type === 'ore' ? 3 : 1;
+          score += w;
+        });
+        candidates.push({ key: inter.key, score });
+      });
+
+      if (candidates.length > 0) {
+        candidates.sort((a, b) => b.score - a.score);
+        const topCount = Math.max(1, Math.ceil(candidates.length * 0.3));
+        const top = candidates.slice(0, topCount);
+        const pick = top[Math.floor(Math.random() * top.length)];
+        return { action: 'place_settlement', data: { key: pick.key } };
       }
     }
     if (state.phase === 'setup_road') {
@@ -493,12 +512,11 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
   if (state.phase === 'build') {
     // Try to build something
     // Priority: city > settlement > dev card > road
-    const actions: { action: string; cost: Partial<Record<ResourceType, number>>; data?: any }[] = [];
 
     // Check cities
     const citySpots = Object.values(state.intersections)
       .filter(i => i.building === 'settlement' && i.owner === player.color);
-    if (citySpots.length > 0 && canAfford(player, { grain: 2, ore: 3 })) {
+    if (player.citiesRemaining > 0 && citySpots.length > 0 && canAfford(player, { grain: 2, ore: 3 })) {
       const pick = citySpots[Math.floor(Math.random() * citySpots.length)];
       return { action: 'place_city', data: { key: pick.key } };
     }
@@ -512,7 +530,7 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
       return adjEdges.some(e => e.road === player.color);
     });
     
-    if (validSettlements.length > 0 && canAfford(player, { lumber: 1, brick: 1, wool: 1, grain: 1 })) {
+    if (player.settlementsRemaining > 0 && validSettlements.length > 0 && canAfford(player, { lumber: 1, brick: 1, wool: 1, grain: 1 })) {
       const pick = validSettlements[Math.floor(Math.random() * validSettlements.length)];
       return { action: 'place_settlement', data: { key: pick.key } };
     }
@@ -525,9 +543,40 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
     // Check roads
     const roadSpots = Object.values(state.edges)
       .filter(e => !e.road && canPlaceRoad(e.key, player.color, state.edges, state.intersections));
-    if (roadSpots.length > 0 && canAfford(player, { lumber: 1, brick: 1 })) {
+    if (player.roadsRemaining > 0 && roadSpots.length > 0 && canAfford(player, { lumber: 1, brick: 1 })) {
       const pick = roadSpots[Math.floor(Math.random() * roadSpots.length)];
       return { action: 'place_road', data: { key: pick.key } };
+    }
+
+    // 4:1 bank trade fallback — convert surplus resources into whatever is
+    // scarcest, so the AI never deadlocks on a missing resource.
+    const canStillRoad = player.roadsRemaining > 0;
+    const canStillSett = player.settlementsRemaining > 0;
+    const canStillCity = player.citiesRemaining > 0;
+
+    const scarcity: Record<string, number> = { brick: 0, lumber: 0, wool: 0, grain: 0, ore: 0 };
+    if (canStillRoad) { scarcity.lumber++; scarcity.brick++; }
+    if (canStillSett) { scarcity.lumber++; scarcity.brick++; scarcity.wool++; scarcity.grain++; }
+    if (canStillCity) { scarcity.grain += 2; scarcity.ore += 3; }
+    scarcity.ore++; scarcity.wool++; scarcity.grain++;
+    let target: ResourceType | null = null;
+    let targetNeed = 0;
+    (Object.keys(scarcity) as ResourceType[]).forEach(res => {
+      const need = scarcity[res];
+      const have = player.resources[res] || 0;
+      if (need > 0 && have < need && (need - have) > targetNeed) {
+        targetNeed = need - have;
+        target = res;
+      }
+    });
+    if (target) {
+      let give: ResourceType | null = null;
+      for (const res of RESOURCES) {
+        if ((player.resources[res] || 0) >= 4 && res !== target) {
+          if (!give || (player.resources[res] > (player.resources[give] || 0))) give = res;
+        }
+      }
+      if (give) return { action: 'bank_trade', data: { give, get: target } };
     }
 
     // Nothing to do, end turn

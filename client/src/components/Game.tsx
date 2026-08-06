@@ -96,6 +96,18 @@ export default function Game({ quickStart = false, playerName = 'You', onExit }:
           buyDevCard(gameState);
           addLog(`${current.name} bought a dev card`);
           break;
+        case 'bank_trade':
+          // 4:1 bank trade: give 4 of one resource, get 1 of another
+          {
+            const give = action.data.give as ResourceType;
+            const get = action.data.get as ResourceType;
+            if ((current.resources[give] || 0) >= 4) {
+              current.resources[give] -= 4;
+              current.resources[get] = (current.resources[get] || 0) + 1;
+              addLog(`${current.name} traded 4 ${give} → 1 ${get}`);
+            }
+          }
+          break;
         case 'end_turn':
           endTurn(gameState);
           addLog(`${current.name} ended turn`);

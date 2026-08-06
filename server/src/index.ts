@@ -448,6 +448,18 @@ function runAITurn(room: Room) {
       emitGameToRoom(room, action.action, { success: true });
       break;
     }
+    case 'bank_trade': {
+      // AI returns {give: 'res', get: 'res'} (4:1 strings)
+      const p = getCurrentPlayer(gs);
+      const give = action.data.give as ResourceType;
+      const get = action.data.get as ResourceType;
+      if ((p.resources[give] || 0) >= 4) {
+        p.resources[give] -= 4;
+        p.resources[get] = (p.resources[get] || 0) + 1;
+      }
+      emitGameToRoom(room, 'bank_trade', { give: { [give]: 4 }, want: { [get]: 1 }, success: true });
+      break;
+    }
   }
 
   // Chain AI turns
