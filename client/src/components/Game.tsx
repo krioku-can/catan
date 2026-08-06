@@ -660,9 +660,11 @@ const styles: Record<string, React.CSSProperties> = {
   panel: {
     maxHeight: '42vh', overflow: 'hidden', background: '#16213e',
     borderTop: '1px solid #0f3460', flexShrink: 0,
+    display: 'flex', flexDirection: 'column',
   },
   panelContent: {
     padding: 12, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8,
+    flex: 1, minHeight: 0,
   },
   setupMsg: { textAlign: 'center', color: '#8890a0', fontSize: 14, padding: 16 },
   setupScreen: {

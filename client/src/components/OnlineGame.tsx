@@ -375,6 +375,8 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     gap: 8,
+    flex: 1,
+    minHeight: 0,
   },
   setupMsg: {
     textAlign: 'center',
