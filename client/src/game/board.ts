@@ -65,14 +65,16 @@ export function hexDistance(a: { q: number; r: number }, b: { q: number; r: numb
 }
 
 export function hexToPixel(q: number, r: number, size: number): { x: number; y: number } {
-  const x = size * (3 / 2 * q);
-  const y = size * (Math.sqrt(3) / 2 * q + Math.sqrt(3) * r);
+  // Pointy-top hex layout — matches how hexes are DRAWN (corners at 30°, 90°…).
+  const x = size * (Math.sqrt(3) * (q + r / 2));
+  const y = size * (3 / 2 * r);
   return { x, y };
 }
 
 export function pixelToHex(x: number, y: number, size: number): { q: number; r: number } {
-  const q = (2 / 3 * x) / size;
-  const r = (-1 / 3 * x + Math.sqrt(3) / 3 * y) / size;
+  // Inverse of the pointy-top formula above.
+  const q = (Math.sqrt(3) / 3 * x - 1 / 3 * y) / size;
+  const r = (2 / 3 * y) / size;
   return hexRound(q, r);
 }
 
