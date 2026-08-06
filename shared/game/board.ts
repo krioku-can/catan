@@ -122,7 +122,7 @@ export function getHexEdges(q: number, r: number): string[] {
   for (let i = 0; i < 6; i++) {
     const next = (i + 1) % 6;
     const [a, b] = [corners[i], corners[next]].sort();
-    edges.push(`${a}-${b}`);
+    edges.push(`${a}~${b}`);
   }
   return edges;
 }
@@ -187,7 +187,7 @@ export function generateBoard(): { tiles: HexTile[]; ports: Port[]; intersection
     const hexEdges = getHexEdges(tile.q, tile.r);
     hexEdges.forEach(key => {
       if (!edges[key]) {
-        const [from, to] = key.split('-');
+        const [from, to] = key.split('~');
         edges[key] = { key, from, to };
       }
     });
