@@ -8,6 +8,7 @@ import DiceRoller from './DiceRoller';
 import TradePanel from './TradePanel';
 import BuildMenu from './BuildMenu';
 import GameLog from './GameLog';
+import { recordGame } from '../stats';
 
 const HEX_SIZE = 58;
 
@@ -28,6 +29,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit }:
   const [stealTargets, setStealTargets] = useState<PlayerColor[]>([]);
   const [showPanel, setShowPanel] = useState<'actions' | 'hand' | 'log' | null>('actions');
   const startedRef = useRef(false);
+  const statsRecordedRef = useRef(false);
 
   const addLog = useCallback((msg: string) => {
     setLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
@@ -264,6 +266,26 @@ export default function Game({ quickStart = false, playerName = 'You', onExit }:
     }
   }, [gameState, addLog]);
 
+  // Record result once when the game ends
+  useEffect(() => {
+    if (!gameState || !gameState.winner || statsRecordedRef.current) return;
+    const myPlayer = gameState.players.find(p => !p.isAI);
+    const winnerColor = gameState.winner;
+    const won = myPlayer?.color === winnerColor;
+    const winner = gameState.players.find(p => p.color === winnerColor);
+    statsRecordedRef.current = true;
+    recordGame({
+      players: gameState.players.length,
+      mode: 'ai',
+      won,
+      wonAs: winnerColor,
+      victoryPoints: winner?.victoryPoints ?? 0,
+      playerColor: myPlayer?.color ?? 'red',
+      opponents: gameState.players.length - 1,
+    });
+    addLog(`🎉 ${winner?.name ?? 'Player'} wins with ${winner?.victoryPoints ?? 10} points!`);
+  }, [gameState, addLog]);
+
   if (showSetup) {
     return <SetupScreen onStart={startGame} onBack={onExit} />;
   }
@@ -282,6 +304,21 @@ export default function Game({ quickStart = false, playerName = 'You', onExit }:
 
   return (
     <div style={styles.mobileContainer}>
+      {gameState.winner && (
+        <div style={styles.winOverlay}>
+          <div style={styles.winCard}>
+            <div style={styles.winEmoji}>{me.color === gameState.winner ? '🏆' : '🤖'}</div>
+            <h2 style={styles.winTitle}>
+              {me.color === gameState.winner ? 'You Win!' : 'Better Luck Next Time'}
+            </h2>
+            <p style={styles.winSub}>
+              {gameState.players.find(p => p.color === gameState.winner)?.name} wins with{' '}
+              {gameState.players.find(p => p.color === gameState.winner)?.victoryPoints ?? 10} points
+            </p>
+            <button style={styles.winBtn} onClick={onExit}>Play Again</button>
+          </div>
+        </div>
+      )}
       <div style={styles.topBar}>
         <div style={styles.turnInfo}>
           <div style={{ ...styles.turnDot, backgroundColor: player.color }} />
@@ -497,6 +534,50 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#e0e0e0',
     fontFamily: 'Segoe UI, sans-serif',
     overflow: 'hidden',
+  },
+  winOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'rgba(0,0,0,0.7)',
+    zIndex: 100,
+  },
+  winCard: {
+    background: '#16213e',
+    borderRadius: 16,
+    padding: '32px 28px',
+    textAlign: 'center',
+    width: '85%',
+    maxWidth: 320,
+  },
+  winEmoji: {
+    fontSize: 56,
+    marginBottom: 8,
+  },
+  winTitle: {
+    fontSize: 26,
+    color: '#ffd700',
+    margin: '0 0 8px',
+  },
+  winSub: {
+    fontSize: 14,
+    color: '#8890a0',
+    margin: '0 0 20px',
+  },
+  winBtn: {
+    padding: '14px 24px',
+    border: 'none',
+    borderRadius: 10,
+    background: 'linear-gradient(135deg, #e94560, #c23152)',
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+    cursor: 'pointer',
   },
   topBar: {
     display: 'flex',

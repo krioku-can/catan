@@ -3,9 +3,10 @@ import { SocketProvider, useSocket } from './hooks/useSocket';
 import Lobby from './components/Lobby';
 import OnlineGame from './components/OnlineGame';
 import Game from './components/Game';
+import Profile from './components/Profile';
 import { getStored, setStored } from './storage';
 
-type Mode = 'home' | 'local' | 'online';
+type Mode = 'home' | 'local' | 'online' | 'profile';
 
 function OnlineShell({ onBack }: { onBack: () => void }) {
   const { gameState } = useSocket();
@@ -50,6 +51,14 @@ function Home({ onPick }: { onPick: (m: Mode) => void }) {
           👨‍👩‍👧‍👦 Play with Family
           <span style={styles.btnHint}>Create or join a room online</span>
         </button>
+
+        <button
+          style={styles.profileBtn}
+          onClick={() => onPick('profile')}
+        >
+          📊 My Stats
+          <span style={styles.btnHint}>Track wins, losses, and history</span>
+        </button>
       </div>
     </div>
   );
@@ -75,6 +84,10 @@ export default function App() {
         <OnlineShell onBack={() => setMode('home')} />
       </SocketProvider>
     );
+  }
+
+  if (mode === 'profile') {
+    return <Profile onBack={() => setMode('home')} />;
   }
 
   return <Home onPick={setMode} />;
@@ -154,5 +167,19 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     fontWeight: 'normal',
     opacity: 0.75,
+  },
+  profileBtn: {
+    padding: '16px 18px',
+    border: '1px solid #ffd700',
+    borderRadius: 10,
+    background: 'transparent',
+    color: '#ffd700',
+    fontSize: 17,
+    fontWeight: 'bold',
+    cursor: 'pointer',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 4,
   },
 };
