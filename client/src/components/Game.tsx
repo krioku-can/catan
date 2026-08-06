@@ -5,6 +5,8 @@ import { getHexCorners } from '../game/board';
 import Board from './Board';
 import PlayerHand from './PlayerHand';
 import DiceRoller from './DiceRoller';
+import DiceFlash from './DiceFlash';
+import HandBar from './HandBar';
 import TradePanel from './TradePanel';
 import BuildMenu from './BuildMenu';
 import GameLog from './GameLog';
@@ -28,6 +30,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit }:
   const [robberMode, setRobberMode] = useState(false);
   const [stealTargets, setStealTargets] = useState<PlayerColor[]>([]);
   const [showPanel, setShowPanel] = useState<'actions' | 'hand' | 'log' | null>('actions');
+  const [diceFlash, setDiceFlash] = useState<{ total: number; faces: [number, number] } | null>(null);
   const startedRef = useRef(false);
   const statsRecordedRef = useRef(false);
 
@@ -212,6 +215,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit }:
     setTimeout(() => {
       const [d1, d2] = rollDice(gameState);
       const total = d1 + d2;
+      setDiceFlash({ total, faces: [d1, d2] });
       addLog(`${getCurrentPlayer(gameState).name} rolled ${d1} + ${d2} = ${total}`);
       
       // Advance the human from 'trade' to 'build' phase. The AI does this
@@ -368,6 +372,11 @@ export default function Game({ quickStart = false, playerName = 'You', onExit }:
           robberMode={robberMode}
           selectedAction={selectedAction}
         />
+        <DiceFlash
+          total={diceFlash?.total ?? null}
+          faces={diceFlash?.faces ?? null}
+          onDone={() => setDiceFlash(null)}
+        />
       </div>
 
       {gameState.setupPhase && isMyTurn && (
@@ -377,6 +386,8 @@ export default function Game({ quickStart = false, playerName = 'You', onExit }:
             : '👆 Tap an edge for a road'}
         </div>
       )}
+
+      <HandBar player={me} />
 
       <div style={styles.tabBar}>
         <button

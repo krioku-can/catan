@@ -1,10 +1,12 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useSocket } from '../hooks/useSocket';
 import { getCurrentPlayer } from '../game/rules';
 import type { ResourceType, PlayerColor } from '../game/types';
 import Board from './Board';
 import PlayerHand from './PlayerHand';
 import DiceRoller from './DiceRoller';
+import DiceFlash from './DiceFlash';
+import HandBar from './HandBar';
 import TradePanel from './TradePanel';
 import BuildMenu from './BuildMenu';
 
@@ -16,6 +18,14 @@ export default function OnlineGame() {
   const [robberMode, setRobberMode] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [showPanel, setShowPanel] = useState<'actions' | 'hand' | 'chat' | null>('actions');
+  const [diceFlash, setDiceFlash] = useState<{ total: number; faces: [number, number] } | null>(null);
+
+  // Flash the rolled number whenever the server syncs a new dice result.
+  useEffect(() => {
+    if (gameState?.dice) {
+      setDiceFlash({ total: gameState.dice[0] + gameState.dice[1], faces: [gameState.dice[0], gameState.dice[1]] });
+    }
+  }, [gameState?.dice?.[0], gameState?.dice?.[1]]);
 
   if (!gameState || !room) return null;
 
@@ -116,6 +126,11 @@ export default function OnlineGame() {
           robberMode={robberMode}
           selectedAction={selectedAction}
         />
+        <DiceFlash
+          total={diceFlash?.total ?? null}
+          faces={diceFlash?.faces ?? null}
+          onDone={() => setDiceFlash(null)}
+        />
       </div>
 
       {/* Setup hint */}
@@ -126,6 +141,8 @@ export default function OnlineGame() {
             : '👆 Tap an edge to place a road'}
         </div>
       )}
+
+      {myPlayer && <HandBar player={myPlayer} />}
 
       {/* Bottom tab bar */}
       <div style={styles.tabBar}>
