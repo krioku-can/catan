@@ -53,10 +53,10 @@ function fillHexPath(ctx: CanvasRenderingContext2D, pts: { x: number; y: number 
 
 function drawWoodBackground(ctx: CanvasRenderingContext2D, W: number, H: number) {
   const g = ctx.createLinearGradient(0, 0, W, H);
-  g.addColorStop(0, '#8B5A2B');
-  g.addColorStop(0.35, '#A06A35');
-  g.addColorStop(0.6, '#8B5A2B');
-  g.addColorStop(1, '#6F4420');
+  g.addColorStop(0, '#9C6B3C');
+  g.addColorStop(0.35, '#B07E4A');
+  g.addColorStop(0.6, '#9C6B3C');
+  g.addColorStop(1, '#7D5528');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, W, H);
   ctx.save();
@@ -94,14 +94,15 @@ function drawHexWithImage(
   type: string,
   hasRobber: boolean,
 ) {
-  // Draw terrain at full size so hexes tile edge-to-edge like a puzzle,
-  // with just a thin seam showing between them.
-  const drawSize = size * 0.99;
+  // Draw terrain at full size so hexes tile flush edge-to-edge like a puzzle,
+  // with only the faint stroke seam separating tiles.
+  const drawSize = size;
   const pts = hexCorners(cx, cy, drawSize);
   ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.35)';
-  ctx.shadowBlur = 8;
-  ctx.shadowOffsetY = 3;
+  // Subtle shadow so tiles sit flush (puzzle-fit), not floating apart.
+  ctx.shadowColor = 'rgba(0,0,0,0.2)';
+  ctx.shadowBlur = 3;
+  ctx.shadowOffsetY = 1;
   fillHexPath(ctx, pts);
   ctx.fillStyle = TERRAIN_FALLBACK[type] || '#888';
   ctx.fill();
