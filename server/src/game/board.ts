@@ -17,17 +17,6 @@ const HEX_DIRECTIONS = [
   { q: 0, r: 1 },   // southeast
 ];
 
-// Corner offsets within a hex (0-5, starting from east going clockwise)
-// Each corner is shared by 3 hexes
-const CORNER_OFFSETS = [
-  { q: 1, r: 0 },    // east
-  { q: 1, r: -1 },   // northeast
-  { q: 0, r: -1 },   // northwest
-  { q: -1, r: 0 },   // west
-  { q: -1, r: 1 },   // southwest
-  { q: 0, r: 1 },    // southeast
-];
-
 // Resource distribution for standard Catan
 const RESOURCE_DISTRIBUTION: HexType[] = [
   'brick', 'brick', 'brick',
@@ -102,17 +91,21 @@ export function getHexesInRadius(radius: number): { q: number; r: number }[] {
   return hexes;
 }
 
-// Get the 6 corners of a hex (as intersection keys)
+// Corner deltas (pointy-top hex). Corner i of hex (q,r) sits at scaled axial
+// position (3q+dq, 3r+dr). Multiplying by 3 gives INTEGER canonical corner
+// keys so every adjacent hex produces the SAME key for a shared corner.
+const CORNER_DELTAS = [
+  { dq: 2, dr: -1 }, //  i=0, -30deg
+  { dq: 1, dr: 1 },  //  i=1,  30deg
+  { dq: -1, dr: 2 }, //  i=2,  90deg
+  { dq: -2, dr: 1 }, //  i=3, 150deg
+  { dq: -1, dr: -1 },//  i=4, 210deg
+  { dq: 1, dr: -2 }, //  i=5, 270deg
+];
+
+// Get the 6 corners of a hex (as canonical intersection keys)
 export function getHexCorners(q: number, r: number): string[] {
-  return CORNER_OFFSETS.map((offset, i) => {
-    const cq = q + offset.q;
-    const cr = r + offset.r;
-    // The corner index at this position depends on which hex we're looking from
-    // For a given hex, corner i is at position (q + offset.q, r + offset.r)
-    // and the corner index at that position is (i + 3) % 6
-    const cornerIdx = ((i + 3) % 6) as 0 | 1 | 2 | 3 | 4 | 5;
-    return `${cq},${cr},${cornerIdx}`;
-  });
+  return CORNER_DELTAS.map(({ dq, dr }) => `${3 * q + dq},${3 * r + dr}`);
 }
 
 // Get the 6 edges of a hex (as edge keys)
@@ -174,12 +167,12 @@ export function generateBoard(): { tiles: HexTile[]; ports: Port[]; intersection
     const corners = getHexCorners(tile.q, tile.r);
     corners.forEach((key) => {
       if (!intersections[key]) {
-        const [cq, cr, cornerStr] = key.split(',');
+        const [x, y] = key.split(',');
         intersections[key] = {
           key,
-          q: parseInt(cq),
-          r: parseInt(cr),
-          corner: parseInt(cornerStr) as 0 | 1 | 2,
+          q: parseInt(x),
+          r: parseInt(y),
+          corner: 0,
         };
       }
     });

@@ -1,7 +1,7 @@
 // Core game rules and state management
 
 import type { GameState, GameConfig, Player, PlayerColor, ResourceType, DevelopmentCard, HexTile, Edge } from './types.js';
-import { generateBoard, canPlaceSettlement, canPlaceRoad, getResourceProduction, getAdjacentIntersections, getEdgesForIntersection } from './board.js';
+import { generateBoard, canPlaceSettlement, canPlaceRoad, getResourceProduction, getAdjacentIntersections, getEdgesForIntersection, getHexCorners } from './board.js';
 
 const RESOURCES: ResourceType[] = ['brick', 'lumber', 'wool', 'grain', 'ore'];
 
@@ -437,22 +437,9 @@ function updateLongestRoad(state: GameState): void {
 
 // Get hexes adjacent to an intersection
 function getAdjacentHexes(intersectionKey: string, board: HexTile[]): HexTile[] {
-  const [q, r] = intersectionKey.split(',').map(Number);
-  // An intersection at (q, r) is adjacent to hexes at (q-1, r), (q, r-1), etc.
-  // This is a simplified version — the actual adjacency depends on the corner
-  const hexes: HexTile[] = [];
-  const candidates = [
-    { q: q - 1, r },
-    { q, r: r - 1 },
-    { q: q + 1, r: r + 1 },
-  ];
-  
-  candidates.forEach(pos => {
-    const tile = board.find(t => t.q === pos.q && t.r === pos.r);
-    if (tile) hexes.push(tile);
-  });
-
-  return hexes;
+  // A corner key is canonical (integer). Find all board hexes that contain
+  // this corner among their 6 corners.
+  return board.filter(tile => getHexCorners(tile.q, tile.r).includes(intersectionKey));
 }
 
 // Simple AI: make a random valid move
