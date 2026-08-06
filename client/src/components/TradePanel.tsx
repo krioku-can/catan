@@ -5,13 +5,13 @@ import { useState } from 'react';
 interface TradePanelProps {
   gameState: GameState;
   isMyTurn: boolean;
-  onTrade: (offer: any) => void;
+  onTrade: (offer: { give: Partial<Record<ResourceType, number>>; want: Partial<Record<ResourceType, number>>; target: PlayerColor | 'bank' }) => void;
 }
 
 const RESOURCE_NAMES = ['brick', 'lumber', 'wool', 'grain', 'ore'] as const;
 const RESOURCE_ICONS = ['🧱', '🪵', '🐑', '🌾', '⛏️'];
 
-export default function TradePanel({ gameState, isMyTurn }: TradePanelProps) {
+export default function TradePanel({ gameState, isMyTurn, onTrade }: TradePanelProps) {
   const [showTrade, setShowTrade] = useState(false);
   const [give, setGive] = useState<Partial<Record<ResourceType, number>>>({});
   const [want, setWant] = useState<Partial<Record<ResourceType, number>>>({});
@@ -26,12 +26,16 @@ export default function TradePanel({ gameState, isMyTurn }: TradePanelProps) {
       if (giveResource && wantResource) {
         const [gRes, gAmt] = giveResource;
         const [wRes, wAmt] = wantResource;
-        if ((player.resources[gRes as ResourceType] || 0) >= (gAmt || 0)) {
-          player.resources[gRes as ResourceType] -= gAmt || 0;
-          player.resources[wRes as ResourceType] = (player.resources[wRes as ResourceType] || 0) + (wAmt || 0);
-          setGive({});
-          setWant({});
-        }
+        // Don't mutate state directly here — delegate to the parent, which
+        // decides how to apply the trade (local refresh vs server action).
+        // The parent also triggers the re-render that keeps the hand fresh.
+        onTrade({
+          give: { [gRes]: gAmt || 0 },
+          want: { [wRes]: wAmt || 0 },
+          target,
+        });
+        setGive({});
+        setWant({});
       }
     }
   };

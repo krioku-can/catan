@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useSocket } from '../hooks/useSocket';
 import { getCurrentPlayer } from '../game/rules';
+import type { ResourceType, PlayerColor } from '../game/types';
 import Board from './Board';
 import PlayerHand from './PlayerHand';
 import DiceRoller from './DiceRoller';
@@ -64,6 +65,15 @@ export default function OnlineGame() {
   const handlePlayKnight = useCallback(() => {
     sendAction('play_knight');
     setRobberMode(true);
+  }, [sendAction]);
+
+  const handleTrade = useCallback((offer: { give: Partial<Record<ResourceType, number>>; want: Partial<Record<ResourceType, number>>; target: PlayerColor | 'bank' }) => {
+    if (offer.target === 'bank') {
+      // Online bank trade is server-authoritative: send the action, the server
+      // validates + applies it, and the synced gameState re-renders the hand.
+      sendAction('bank_trade', { give: offer.give, want: offer.want });
+    }
+    // Player-to-player trades are not implemented in the online flow yet.
   }, [sendAction]);
 
   const handleSendChat = useCallback(() => {
@@ -166,7 +176,7 @@ export default function OnlineGame() {
                   <TradePanel
                     gameState={gameState}
                     isMyTurn={isMyTurn}
-                    onTrade={() => {}}
+                    onTrade={handleTrade}
                   />
                 </>
               )}

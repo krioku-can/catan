@@ -429,8 +429,18 @@ export default function Game({ quickStart = false, playerName = 'You', onExit }:
                     <TradePanel
                       gameState={gameState}
                       isMyTurn={isMyTurn}
-                      onTrade={() => {
-                        addLog(`Trade offer from ${player.name}`);
+                      onTrade={(offer) => {
+                        // Local (vs-AI) bank trade: apply to the live gameState
+                        // and force a re-render so the hand shows fresh counts.
+                        if (offer.target === 'bank') {
+                          const gRes = Object.entries(offer.give)[0];
+                          const wRes = Object.entries(offer.want)[0];
+                          if (gRes && wRes && (player.resources[gRes[0] as ResourceType] || 0) >= (gRes[1] || 0)) {
+                            player.resources[gRes[0] as ResourceType] -= gRes[1] || 0;
+                            player.resources[wRes[0] as ResourceType] = (player.resources[wRes[0] as ResourceType] || 0) + (wRes[1] || 0);
+                            addLog(`${player.name} traded 4 ${gRes[0]} → ${wRes[1]} ${wRes[0]}`);
+                          }
+                        }
                         setGameState({ ...gameState });
                       }}
                     />
