@@ -11,6 +11,7 @@ import TradePanel from './TradePanel';
 import BuildMenu from './BuildMenu';
 import GameLog from './GameLog';
 import { recordGame } from '../stats';
+import { setStored, getStored } from '../storage';
 
 const HEX_SIZE = 58;
 
@@ -18,9 +19,10 @@ interface GameProps {
   quickStart?: boolean;
   playerName?: string;
   onExit?: () => void;
+  resume?: boolean;
 }
 
-export default function Game({ quickStart = false, playerName = 'You', onExit }: GameProps) {
+export default function Game({ quickStart = false, playerName = 'You', onExit, resume = false }: GameProps) {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [_config, _setConfig] = useState<GameConfig | null>(null);
   const [selectedAction, setSelectedAction] = useState<string | null>(null);
@@ -33,6 +35,17 @@ export default function Game({ quickStart = false, playerName = 'You', onExit }:
   const [diceFlash, setDiceFlash] = useState<{ total: number; faces: [number, number] } | null>(null);
   const startedRef = useRef(false);
   const statsRecordedRef = useRef(false);
+
+  // Auto-save the game to localStorage on every state change so a refresh
+  // or accidental close never loses progress. Cleared when the game ends.
+  useEffect(() => {
+    if (!gameState) return;
+    if (gameState.winner) {
+      setStored('catan_save', '');
+      return;
+    }
+    setStored('catan_save', JSON.stringify(gameState));
+  }, [gameState]);
 
   const addLog = useCallback((msg: string) => {
     setLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
@@ -57,6 +70,25 @@ export default function Game({ quickStart = false, playerName = 'You', onExit }:
       aiPlayers: [1, 2, 3],
     });
   }, [quickStart, playerName, startGame]);
+
+  // Resume a saved game
+  useEffect(() => {
+    if (!resume || startedRef.current) return;
+    startedRef.current = true;
+    const raw = getStored('catan_save');
+    if (raw) {
+      try {
+        const saved = JSON.parse(raw) as GameState;
+        setGameState(saved);
+        setShowSetup(false);
+        addLog('Resumed saved game');
+      } catch {
+        setShowSetup(true);
+      }
+    } else {
+      setShowSetup(true);
+    }
+  }, [resume, addLog]);
 
   // Auto-run AI turns when it's an AI player's turn
   useEffect(() => {

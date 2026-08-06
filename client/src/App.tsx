@@ -6,7 +6,7 @@ import Game from './components/Game';
 import Profile from './components/Profile';
 import { getStored, setStored } from './storage';
 
-type Mode = 'home' | 'local' | 'online' | 'profile';
+type Mode = 'home' | 'local' | 'online' | 'profile' | 'resume';
 
 function OnlineShell({ onBack }: { onBack: () => void }) {
   const { gameState } = useSocket();
@@ -16,6 +16,7 @@ function OnlineShell({ onBack }: { onBack: () => void }) {
 
 function Home({ onPick }: { onPick: (m: Mode) => void }) {
   const [name, setName] = useState(() => getStored('catan_name') || '');
+  const hasSave = !!getStored('catan_save');
 
   const saveName = (n: string) => {
     setName(n);
@@ -35,6 +36,16 @@ function Home({ onPick }: { onPick: (m: Mode) => void }) {
           onChange={e => saveName(e.target.value)}
           maxLength={20}
         />
+
+        {hasSave && (
+          <button
+            style={styles.resumeBtn}
+            onClick={() => onPick('resume')}
+          >
+            ▶️ Resume Game
+            <span style={styles.btnHint}>Pick up where you left off</span>
+          </button>
+        )}
 
         <button
           style={styles.primaryBtn}
@@ -74,6 +85,17 @@ export default function App() {
         quickStart
         playerName={playerName}
         onExit={() => setMode('home')}
+      />
+    );
+  }
+
+  if (mode === 'resume') {
+    return (
+      <Game
+        quickStart={false}
+        playerName={playerName}
+        onExit={() => setMode('home')}
+        resume
       />
     );
   }
@@ -141,6 +163,20 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 10,
     background: 'linear-gradient(135deg, #e94560, #c23152)',
     color: 'white',
+    fontSize: 17,
+    fontWeight: 'bold',
+    cursor: 'pointer',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 4,
+  },
+  resumeBtn: {
+    padding: '16px 18px',
+    border: '2px solid #34d399',
+    borderRadius: 10,
+    background: 'rgba(52,211,153,0.12)',
+    color: '#34d399',
     fontSize: 17,
     fontWeight: 'bold',
     cursor: 'pointer',
