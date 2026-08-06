@@ -25,6 +25,18 @@ const TERRAIN_FALLBACK: Record<string, string> = {
   grain: '#e0b84a', ore: '#8a8f95', desert: '#e8d5a3',
 };
 
+// Pointy-top hex neighbors, indexed by edge direction (0-5) — matches the
+// order used for PORT_LAYOUT `dir` values. NEIGHBORS[dir] is the hex across
+// edge `dir` from a tile.
+const HEX_NEIGHBORS: [number, number][] = [
+  [1, 0],   // dir 0: east
+  [1, -1],  // dir 1: northeast
+  [0, -1],  // dir 2: northwest
+  [-1, 0],  // dir 3: west
+  [-1, 1],  // dir 4: southwest
+  [0, 1],   // dir 5: southeast
+];
+
 interface BoardProps {
   gameState: GameState;
   hexSize: number;
@@ -394,7 +406,7 @@ export default function Board({
     waterKeys.forEach(key => {
       const [q, r] = key.split(',').map(Number);
       const { x, y } = hexToPixel(q, r, hexSize);
-      drawWaterHex(ctx, x + W / 2, y + H / 2, hexSize * 0.98);
+      drawWaterHex(ctx, x + W / 2, y + H / 2, hexSize);
     });
 
     gameState.board.forEach(tile => {
@@ -409,13 +421,13 @@ export default function Board({
 
     if (gameState.ports?.length) {
       gameState.ports.forEach(port => {
-        const center = hexToPixel(port.q, port.r, hexSize);
-        const a1 = (Math.PI / 3) * port.direction - Math.PI / 6;
-        const a2 = (Math.PI / 3) * ((port.direction + 1) % 6) - Math.PI / 6;
-        const mx = (Math.cos(a1) + Math.cos(a2)) / 2;
-        const my = (Math.sin(a1) + Math.sin(a2)) / 2;
-        const cx = center.x + W / 2 + mx * hexSize * 1.35;
-        const cy = center.y + H / 2 + my * hexSize * 1.35;
+        // Place the port badge at the center of the water hex this edge faces.
+        // NEIGHBORS[dir] is the hex across edge `dir` (pointy-top), which for a
+        // coastal port is always water.
+        const dirVec = HEX_NEIGHBORS[port.direction];
+        const center = hexToPixel(port.q + dirVec[0], port.r + dirVec[1], hexSize);
+        const cx = center.x + W / 2;
+        const cy = center.y + H / 2;
         let label = '3:1';
         if (port.type.startsWith('2:1')) {
           const res = port.type.split(':')[2];
