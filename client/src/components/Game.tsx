@@ -214,6 +214,14 @@ export default function Game({ quickStart = false, playerName = 'You', onExit }:
       const total = d1 + d2;
       addLog(`${getCurrentPlayer(gameState).name} rolled ${d1} + ${d2} = ${total}`);
       
+      // Advance the human from 'trade' to 'build' phase. The AI does this
+      // internally (skip_trade), but a human has no other way to reach the
+      // build phase where pieces are placed — without this they'd be stuck
+      // in 'trade' and unable to build anything.
+      if (!getCurrentPlayer(gameState).isAI) {
+        gameState.phase = 'build';
+      }
+      
       if (total === 7) {
         addLog('7 rolled! Robber time!');
         setRobberMode(true);

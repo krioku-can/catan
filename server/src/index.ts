@@ -261,6 +261,12 @@ io.on('connection', (socket) => {
       case 'roll_dice': {
         const [d1, d2] = rollDice(gs);
         result = { dice: [d1, d2], total: d1 + d2 };
+        // Advance the roller to the build phase. The AI reaches build via its
+        // internal skip_trade, but a human player has no other path — without
+        // this they'd be stuck in 'trade' and unable to build anything.
+        if (d1 + d2 !== 7 && !getCurrentPlayer(gs).isAI) {
+          gs.phase = 'build';
+        }
         if (d1 + d2 === 7) {
           // Find steal targets
           const [rq, rr] = gs.robberHex.split(',').map(Number);
