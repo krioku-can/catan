@@ -406,7 +406,6 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
             type="button"
             style={styles.turnOrderBtn}
             onClick={handleTurnOrder}
-            disabled={!!turnOrderRolls}
           >
             {turnOrderRolls ? 'Start Placing!' : 'Roll Turn Order'}
           </button>
