@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { GameState, GameConfig, PlayerColor, ResourceType } from '../game/types';
-import { createInitialState, getCurrentPlayer, rollDice, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight } from '../game/rules';
+import { createInitialState, getCurrentPlayer, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight } from '../game/rules';
 import { getHexCorners } from '../game/board';
 import Board from './Board';
 import PlayerHand from './PlayerHand';
@@ -33,6 +33,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
   const [stealTargets, setStealTargets] = useState<PlayerColor[]>([]);
   const [showPanel, setShowPanel] = useState<'actions' | 'hand' | 'log' | null>('actions');
   const [diceFlash, setDiceFlash] = useState<{ total: number; faces: [number, number] } | null>(null);
+  const [turnOrderRolls, setTurnOrderRolls] = useState<Record<string, number> | null>(null);
   const startedRef = useRef(false);
   const statsRecordedRef = useRef(false);
 
@@ -241,6 +242,26 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     }
   }, [gameState, selectedAction, addLog]);
 
+  const handleTurnOrder = useCallback(() => {
+    if (!gameState) return;
+    if (gameState.phase !== 'turn_order') return;
+    // If we've already rolled (rolls shown), this tap starts placing
+    if (turnOrderRolls) {
+      gameState.phase = 'setup_settlement';
+      gameState.setupRound = 0;
+      setGameState({ ...gameState });
+      return;
+    }
+    const result = rollTurnOrder(gameState);
+    setTurnOrderRolls(result.rolls);
+    // Log the result in order
+    result.order.forEach((color, i) => {
+      const p = gameState.players.find(p => p.color === color);
+      addLog(`${i + 1}. ${p?.name ?? color} rolled ${result.rolls[color]}`);
+    });
+    setGameState({ ...gameState });
+  }, [gameState, turnOrderRolls, addLog]);
+
   const handleRollDice = useCallback(() => {
     if (!gameState) return;
     setDiceRolling(true);
@@ -360,6 +381,40 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
 
   return (
     <div style={styles.mobileContainer}>
+      {gameState.phase === 'turn_order' && (
+        <div style={styles.turnOrderScreen}>
+          <h2 style={styles.turnOrderTitle}>🎲 Roll for Turn Order</h2>
+          <p style={styles.turnOrderSub}>
+            {turnOrderRolls ? 'Turn order locked in — highest roll goes first!' : 'Each player rolls 2 dice. Highest roll places first.'}
+          </p>
+          {turnOrderRolls && (
+            <div style={styles.turnOrderList}>
+              {gameState.turnOrder.map((color, i) => {
+                const p = gameState.players.find(p => p.color === color);
+                return (
+                  <div key={color} style={styles.turnOrderItem}>
+                    <span style={styles.turnOrderRank}>{i + 1}</span>
+                    <span style={{ ...styles.turnOrderDot, backgroundColor: color }} />
+                    <span style={styles.turnOrderName}>{p?.name}{!p?.isAI ? ' (You)' : ''}</span>
+                    <span style={styles.turnOrderRoll}>🎲 {turnOrderRolls[color]}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <button
+            type="button"
+            style={styles.turnOrderBtn}
+            onClick={handleTurnOrder}
+            disabled={!!turnOrderRolls}
+          >
+            {turnOrderRolls ? 'Start Placing!' : 'Roll Turn Order'}
+          </button>
+          {turnOrderRolls && (
+            <p style={styles.turnOrderHint}>Tap "Start Placing" to begin setup.</p>
+          )}
+        </div>
+      )}
       {gameState.winner && (
         <div style={styles.winOverlay}>
           <div style={styles.winCard}>
@@ -600,6 +655,7 @@ function SetupScreen({ onStart, onBack }: { onStart: (config: GameConfig) => voi
 
 const styles: Record<string, React.CSSProperties> = {
   mobileContainer: {
+    position: 'relative',
     display: 'flex',
     flexDirection: 'column',
     height: '100dvh',
@@ -734,4 +790,32 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '10px', border: '1px solid #0f3460', borderRadius: 8,
     background: 'transparent', color: '#8890a0', cursor: 'pointer',
   },
+  turnOrderScreen: {
+    position: 'absolute', inset: 0, zIndex: 50, display: 'flex',
+    flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+    background: '#1a1a2e', color: '#e0e0e0', padding: 24, gap: 16,
+  },
+  turnOrderTitle: { fontSize: 28, color: '#ffd700', margin: 0 },
+  turnOrderSub: { fontSize: 15, color: '#8890a0', textAlign: 'center', margin: 0 },
+  turnOrderList: {
+    display: 'flex', flexDirection: 'column', gap: 10, width: '100%', maxWidth: 320,
+  },
+  turnOrderItem: {
+    display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px',
+    background: '#16213e', borderRadius: 10, border: '1px solid #0f3460',
+  },
+  turnOrderRank: {
+    width: 26, height: 26, borderRadius: '50%', display: 'flex',
+    alignItems: 'center', justifyContent: 'center', fontWeight: 800,
+    background: '#ffd700', color: '#1a1a2e', fontSize: 14, flexShrink: 0,
+  },
+  turnOrderDot: { width: 14, height: 14, borderRadius: '50%', flexShrink: 0 },
+  turnOrderName: { flex: 1, fontSize: 16, fontWeight: 600 },
+  turnOrderRoll: { fontSize: 18, fontWeight: 800, color: '#ffd700' },
+  turnOrderBtn: {
+    padding: '16px 32px', border: 'none', borderRadius: 10,
+    background: 'linear-gradient(135deg, #e94560, #c23152)',
+    color: 'white', fontSize: 17, fontWeight: 'bold', cursor: 'pointer',
+  },
+  turnOrderHint: { fontSize: 13, color: '#8890a0', margin: 0 },
 };

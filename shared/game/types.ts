@@ -59,7 +59,7 @@ export interface Player {
   isAI: boolean;
 }
 
-export type TurnPhase = 'roll' | 'trade' | 'build' | 'setup_settlement' | 'setup_road';
+export type TurnPhase = 'roll' | 'trade' | 'build' | 'setup_settlement' | 'setup_road' | 'turn_order';
 
 export interface TradeOffer {
   from: PlayerColor;

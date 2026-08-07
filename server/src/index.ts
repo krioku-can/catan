@@ -446,6 +446,11 @@ function runAITurn(room: Room) {
       emitGameToRoom(room, 'skip_trade', { success: true });
       break;
     }
+    case 'roll_turn_order': {
+      // rollTurnOrder already ran inside aiTurn; just sync the room
+      emitGameToRoom(room, 'roll_turn_order', { order: gs.turnOrder });
+      break;
+    }
     case 'place_settlement':
     case 'place_road':
     case 'place_city':

@@ -115,20 +115,15 @@ export function placeSetupSettlement(state: GameState, intersectionKey: string):
   player.settlementsRemaining--;
   player.victoryPoints += 1;
 
-  // Give starting resources on the player's SECOND settlement only (they
-  // start with 5; after placing their 2nd they have 3 left). Using the piece
-  // count rather than setupRound gives resources once per player regardless
-  // of turn order — the old `setupRound >= 2` gave AI players resources on
-  // BOTH settlements while red got them only once.
-  if (player.settlementsRemaining === 3) {
-    // Give resources from adjacent hexes
-    const hexes = getAdjacentHexes(intersectionKey, state.board);
-    hexes.forEach(hex => {
-      if (hex.type !== 'desert' && hex.type !== 'water') {
-        addResources(player, { [hex.type]: 1 });
-      }
-    });
-  }
+  // Both starting settlements provide resources: give 1 of each resource type
+  // from every adjacent non-desert/non-water hex on EACH setup settlement
+  // (the first and the second).
+  const hexes = getAdjacentHexes(intersectionKey, state.board);
+  hexes.forEach(hex => {
+    if (hex.type !== 'desert' && hex.type !== 'water') {
+      addResources(player, { [hex.type]: 1 });
+    }
+  });
 
   return null; // success
 }
@@ -150,6 +145,26 @@ export function placeSetupRoad(state: GameState, edgeKey: string): string | null
   edge.road = player.color;
   player.roadsRemaining--;
   return null;
+}
+
+// Roll for starting turn order. Each player rolls 2 dice; the player with the
+// highest total goes first, then descending. Returns an ordered array of the
+// resulting player colors plus their individual roll totals.
+export function rollTurnOrder(state: GameState): { order: PlayerColor[]; rolls: Record<string, number> } {
+  const players = state.players;
+  const rolls: Record<string, number> = {};
+  players.forEach(p => {
+    rolls[p.color] = Math.floor(Math.random() * 6) + 1 + (Math.floor(Math.random() * 6) + 1);
+  });
+  // Sort descending by roll; ties broken by player index (stable-ish)
+  const ordered = [...players].sort((a, b) => {
+    const diff = (rolls[b.color] || 0) - (rolls[a.color] || 0);
+    if (diff !== 0) return diff;
+    return players.indexOf(a) - players.indexOf(b);
+  });
+  state.turnOrder = ordered.map(p => p.color);
+  state.currentTurn = 0;
+  return { order: state.turnOrder, rolls };
 }
 
 // Roll dice
@@ -450,6 +465,14 @@ function getAdjacentHexes(intersectionKey: string, board: HexTile[]): HexTile[] 
 export function aiTurn(state: GameState): { action: string; data?: any } | null {
   const player = getCurrentPlayer(state);
   if (!player.isAI) return null;
+
+  // Turn-order roll — AI rolls and advances to setup automatically
+  if (state.phase === 'turn_order') {
+    rollTurnOrder(state);
+    state.phase = 'setup_settlement';
+    state.setupRound = 0;
+    return { action: 'roll_turn_order' };
+  }
 
   // During setup
   if (state.setupPhase) {
