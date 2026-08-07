@@ -115,8 +115,13 @@ export function placeSetupSettlement(state: GameState, intersectionKey: string):
   player.settlementsRemaining--;
   player.victoryPoints += 1;
 
-  // During setup, give resources for the SECOND settlement only
-  if (state.setupRound >= 2) {
+  // Give starting resources on the player's SECOND settlement only.
+  // A player starts with 5 settlements; after placing their 2nd they have 3
+  // left. Using the piece count (not setupRound) correctly gives resources
+  // once per player regardless of turn order — the old `setupRound >= 2`
+  // check gave AI players resources on BOTH settlements while red got them
+  // only once, a real balance bug.
+  if (player.settlementsRemaining === 3) {
     // Give resources from adjacent hexes
     const hexes = getAdjacentHexes(intersectionKey, state.board);
     hexes.forEach(hex => {
