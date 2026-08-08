@@ -428,7 +428,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderBottom: '2px solid #ffd700',
   },
   panel: {
-    maxHeight: '45vh',
+    maxHeight: '60vh',
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',

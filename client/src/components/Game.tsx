@@ -838,7 +838,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   tabActive: { color: '#ffd700', borderBottom: '2px solid #ffd700' },
   panel: {
-    maxHeight: '42vh', overflow: 'hidden', background: '#16213e',
+    maxHeight: '60vh', overflow: 'hidden', background: '#16213e',
     borderTop: '1px solid #0f3460', flexShrink: 0,
     display: 'flex', flexDirection: 'column',
   },
