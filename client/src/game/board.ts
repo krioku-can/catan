@@ -134,7 +134,13 @@ export function getPortIntersections(port: { q: number; r: number; direction: nu
 }
 
 // Return the best port rate a player has access to for a given resource.
-// Returns 4 (no port), 3 (generic 3:1), or 2 (specific 2:1 for that resource).
+// Official maritime trade:
+//   - Always 4:1 with the bank (no harbor required).
+//   - Settlement/city on a 3:1 harbor → 3 of any one resource for 1 other.
+//   - Settlement/city on a matching 2:1 harbor → 2 of THAT resource for 1 other.
+//   - 2:1 does NOT apply to other resources; only the harbor's resource type.
+//   - Either intersection of the harbor edge grants the harbor.
+//   - Cities count the same as settlements for harbor control.
 export function getPortRate(
   color: string,
   resource: ResourceType,
@@ -146,7 +152,9 @@ export function getPortRate(
     const [a, b] = getPortIntersections(port);
     const ia = intersections[a];
     const ib = intersections[b];
-    const hasPort = (ia?.owner === color) || (ib?.owner === color);
+    const hasPort =
+      (ia?.owner === color && !!ia.building) ||
+      (ib?.owner === color && !!ib.building);
     if (!hasPort) continue;
     if (port.type === '3:1') {
       best = Math.min(best, 3);
@@ -155,6 +163,23 @@ export function getPortRate(
     }
   }
   return best;
+}
+
+/** List harbors a player currently controls (for UI). */
+export function getOwnedPorts(
+  color: string,
+  ports: Port[],
+  intersections: Record<string, Intersection>,
+): Port[] {
+  return ports.filter(port => {
+    const [a, b] = getPortIntersections(port);
+    const ia = intersections[a];
+    const ib = intersections[b];
+    return (
+      (ia?.owner === color && !!ia.building) ||
+      (ib?.owner === color && !!ib.building)
+    );
+  });
 }
 
 // Shuffle array in place (Fisher-Yates)

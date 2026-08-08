@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { GameState, ResourceType, PlayerColor, TurnPhase } from '../game/types';
 import { getCurrentPlayer } from '../game/rules';
-import { getPortRate } from '../game/board';
+import { getPortRate, getOwnedPorts } from '../game/board';
 
 interface TradePanelProps {
   gameState: GameState;
@@ -46,6 +46,15 @@ export default function TradePanel({ gameState, isMyTurn, phase, onBankTrade, on
     bankGiveAmt >= rate &&
     bankGiveAmt % rate === 0 &&
     (player.resources[bankGive] || 0) >= bankGiveAmt;
+
+  const ownedPorts = getOwnedPorts(player.color, gameState.ports, gameState.intersections);
+  const portSummary = ownedPorts.length === 0
+    ? 'No harbors — bank trades at 4:1'
+    : `Your harbors: ${ownedPorts.map(p => {
+        if (p.type === '3:1') return '3:1';
+        const res = p.type.split(':')[2] as ResourceType;
+        return `2:1 ${RESOURCE_ICONS[res] || res}`;
+      }).join(' · ')}`;
 
   const totalGive = Object.values(give).reduce((s, n) => s + (n || 0), 0);
   const totalWant = Object.values(want).reduce((s, n) => s + (n || 0), 0);
@@ -123,6 +132,10 @@ export default function TradePanel({ gameState, isMyTurn, phase, onBankTrade, on
 
           {tab === 'bank' ? (
             <>
+              <div style={styles.portSummary}>{portSummary}</div>
+              <div style={styles.hint}>
+                Bank always accepts 4:1. Harbors improve the give rate only (3:1 any, or 2:1 of that resource).
+              </div>
               <div style={styles.row}>
                 <div style={styles.label}>Give (your resources)</div>
                 <div style={styles.resRow}>
@@ -308,6 +321,11 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#1a1a2e', color: '#8890a0', fontSize: 13, fontWeight: 'bold', cursor: 'pointer',
   },
   tabActive: { borderColor: '#ffd700', color: '#ffd700', background: '#16213e' },
+  portSummary: {
+    fontSize: 12, color: '#ffd700', fontWeight: 'bold',
+    background: '#1a1a2e', borderRadius: 6, padding: '6px 8px',
+  },
+  hint: { fontSize: 11, color: '#8890a0', lineHeight: 1.35 },
   row: { display: 'flex', flexDirection: 'column', gap: 4 },
   label: { fontSize: 11, color: '#8890a0' },
   resRow: { display: 'flex', gap: 4, flexWrap: 'wrap' },

@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import type { GameState, Intersection, Edge } from '../game/types';
-import { hexToPixel, pixelToHex, getHexCorners } from '../game/board';
+import { hexToPixel, pixelToHex, getHexCorners, getPortIntersections } from '../game/board';
 
 const PLAYER_COLORS: Record<string, string> = {
   red: '#d32f2f',
@@ -281,19 +281,54 @@ function drawRoad(
 }
 
 function drawPortBadge(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number, label: string) {
-  const r = size * 0.22;
+  const r = size * 0.26;
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
   ctx.fillStyle = '#f5f0e1';
   ctx.fill();
-  ctx.strokeStyle = '#8b7355';
-  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = '#5d4e37';
+  ctx.lineWidth = 2;
   ctx.stroke();
-  ctx.fillStyle = '#333';
-  ctx.font = `bold ${size * 0.16}px Arial`;
+  ctx.fillStyle = '#2c2416';
+  ctx.font = `bold ${Math.max(10, size * 0.15)}px Arial`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(label, cx, cy);
+}
+
+/** Draw harbor pier from water badge to the two land corners that grant the port. */
+function drawPortPier(
+  ctx: CanvasRenderingContext2D,
+  badgeX: number,
+  badgeY: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  size: number,
+) {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(245, 240, 225, 0.85)';
+  ctx.lineWidth = Math.max(3, size * 0.07);
+  ctx.lineCap = 'round';
+  // Two pier legs to the port vertices
+  ctx.beginPath();
+  ctx.moveTo(badgeX, badgeY);
+  ctx.lineTo(ax, ay);
+  ctx.moveTo(badgeX, badgeY);
+  ctx.lineTo(bx, by);
+  ctx.stroke();
+  // Vertex markers — these corners unlock the harbor
+  for (const [x, y] of [[ax, ay], [bx, by]] as const) {
+    ctx.beginPath();
+    ctx.arc(x, y, Math.max(4, size * 0.09), 0, Math.PI * 2);
+    ctx.fillStyle = '#f5f0e1';
+    ctx.fill();
+    ctx.strokeStyle = '#8b7355';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function buildIntersectionPositions(
@@ -421,20 +456,39 @@ export default function Board({
 
     if (gameState.ports?.length) {
       gameState.ports.forEach(port => {
-        // Place the port badge at the center of the water hex this edge faces.
-        // NEIGHBORS[dir] is the hex across edge `dir` (pointy-top), which for a
-        // coastal port is always water.
+        // Badge sits on the water hex across the coastal edge.
         const dirVec = HEX_NEIGHBORS[port.direction];
         const center = hexToPixel(port.q + dirVec[0], port.r + dirVec[1], hexSize);
         const cx = center.x + W / 2;
         const cy = center.y + H / 2;
+
+        // Official rule: a settlement/city on EITHER intersection of the harbor
+        // edge grants that harbor. Draw pier legs so those corners are obvious.
+        const [ikA, ikB] = getPortIntersections(port);
+        const pa = positions.get(ikA);
+        const pb = positions.get(ikB);
+        if (pa && pb) {
+          drawPortPier(
+            ctx,
+            cx,
+            cy,
+            pa.x + W / 2,
+            pa.y + H / 2,
+            pb.x + W / 2,
+            pb.y + H / 2,
+            hexSize,
+          );
+        }
+
+        // Labels: "3:1" generic, or "2:1" + resource icon for special harbors.
+        // Special harbors only improve trades OF that resource (give side).
         let label = '3:1';
         if (port.type.startsWith('2:1')) {
           const res = port.type.split(':')[2];
           const icons: Record<string, string> = {
             brick: '🧱', lumber: '🪵', wool: '🐑', grain: '🌾', ore: '⛏',
           };
-          label = icons[res] || '2:1';
+          label = `2:${icons[res] || '?'}`;
         }
         drawPortBadge(ctx, cx, cy, hexSize, label);
       });
