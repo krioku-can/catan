@@ -30,20 +30,22 @@ const RESOURCE_DISTRIBUTION: HexType[] = [
 // Number token distribution (in order of placement)
 const NUMBER_DISTRIBUTION = [5, 2, 6, 3, 8, 10, 9, 12, 11, 4, 8, 10, 9, 4, 5, 6, 3, 11];
 
-// Official base game: 9 harbors. Each sits on a TRUE coastal edge — BOTH of
-// its corners touch water (verified geometrically). No two share a vertex.
-// Positions are the maximally-even-spread subset of valid coastal edges.
-// 4× generic 3:1 + 5× resource-specific 2:1.
+// Official base game: 9 harbors. Each sits on a coastal edge that faces the
+// sea (neighbor hex is water). The greedy "both corners have <3 land" filter
+// was wrong — it dropped the top/bottom apex harbors and bunched ports on the
+// left/right flanks. This set spans ALL sides of the island evenly:
+//   angles ≈ -170, -132, -80, -48, -10, +24, +60, +120, +165 degrees
+// No two share a vertex. 4× generic 3:1 + 5× resource-specific 2:1.
 const PORT_LAYOUT: { q: number; r: number; dir: number; type: Port['type'] }[] = [
-  { q: -1, r: -1, dir: 3, type: '3:1' },
-  { q: 0, r: -2, dir: 3, type: '2:1:grain' },
-  { q: 2, r: -2, dir: 0, type: '3:1' },
+  { q: -2, r: 0, dir: 4, type: '3:1' },
+  { q: 0, r: -2, dir: 2, type: '2:1:grain' },
+  { q: 1, r: -2, dir: 1, type: '3:1' },
+  { q: 2, r: -2, dir: 1, type: '2:1:ore' },
   { q: 2, r: 0, dir: 5, type: '2:1:brick' },
   { q: 1, r: 1, dir: 0, type: '3:1' },
-  { q: 0, r: 2, dir: 0, type: '2:1:lumber' },
-  { q: -2, r: 2, dir: 3, type: '2:1:ore' },
-  { q: -2, r: 1, dir: 3, type: '3:1' },
-  { q: -2, r: 0, dir: 3, type: '2:1:wool' },
+  { q: 0, r: 2, dir: 4, type: '2:1:lumber' },
+  { q: -2, r: 2, dir: 5, type: '3:1' },
+  { q: -2, r: 1, dir: 4, type: '2:1:wool' },
 ];
 
 export function getNeighbors(q: number, r: number): { q: number; r: number }[] {
