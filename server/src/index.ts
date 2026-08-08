@@ -4,7 +4,7 @@ import cors from 'cors';
 import { Server } from 'socket.io';
 import { v4 as uuidv4 } from 'uuid';
 import type { GameState, GameConfig, PlayerColor, ResourceType } from './game/types.js';
-import { createInitialState, getCurrentPlayer, getPlayerByColor, rollDice, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, executeBankTrade } from './game/rules.js';
+import { createInitialState, getCurrentPlayer, getPlayerByColor, rollDice, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, executeBankTrade, normalizePlayerDevCards, countHeldDevCards } from './game/rules.js';
 import { getHexCorners, getPortRate } from './game/board.js';
 
 const PORT = parseInt(process.env.PORT || '3001');
@@ -42,20 +42,34 @@ const COLORS: PlayerColor[] = ['red', 'blue', 'white', 'orange'];
 
 /** Hide other players' cards/resources — only counts are public */
 function sanitizeGameStateForPlayer(gs: GameState, viewerColor: PlayerColor | null): GameState {
+  // Normalize legacy VP / missing-id cards before send.
+  for (const p of gs.players) {
+    normalizePlayerDevCards(p);
+  }
+  // Don't leak the remaining deck composition to clients.
+  const publicDeckCount = (gs.devDeck || []).length;
+
   return {
     ...gs,
+    // Clients only need the count remaining, not the order/types.
+    devDeck: Array(publicDeckCount).fill('knight') as GameState['devDeck'],
     players: gs.players.map(p => {
-      if (viewerColor && p.color === viewerColor) return p;
+      if (viewerColor && p.color === viewerColor) {
+        // Full private hand for the viewer (including VPs + played knights).
+        return p;
+      }
       const totalResources = (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
         .reduce((sum, r) => sum + (p.resources[r] || 0), 0);
-      const hiddenDev = p.devCards.filter(c => !c.played).length;
+      const hiddenDev = countHeldDevCards(p);
       return {
         ...p,
         resources: { brick: 0, lumber: 0, wool: 0, grain: 0, ore: 0 },
-        // Encode total card count in a private field consumers already know via totalResources helper
-        // We stash total in lumber as a single public count channel? No — add explicit public fields via cast
-        devCards: Array.from({ length: hiddenDev }, () => ({ type: 'knight' as const, played: false })),
-        // Mark hidden so client shows backs only
+        // Face-down stubs only — count matches real held cards; types hidden.
+        devCards: Array.from({ length: hiddenDev }, (_, i) => ({
+          id: `hidden_${p.color}_${i}`,
+          type: 'knight' as const,
+          played: false,
+        })),
         _hidden: true,
         _resourceCount: totalResources,
         _devCardCount: hiddenDev,

@@ -42,6 +42,7 @@ export interface Edge {
 }
 
 export interface DevelopmentCard {
+  id: string;
   type: 'knight' | 'victory_point' | 'road_building' | 'year_of_plenty' | 'monopoly';
   played: boolean;
   /** Official rule: cannot play a card on the same turn it was bought. */
@@ -99,6 +100,8 @@ export interface GameState {
   pendingDevAction: 'road_building' | null;
   /** Free roads remaining from a Road Building card (0-2). */
   pendingDevRoads: number;
+  /** Shared development-card deck (face-down). Drawn on buy. */
+  devDeck: DevelopmentCard['type'][];
 }
 
 export interface GameConfig {

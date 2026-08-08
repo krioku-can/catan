@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { Player, ResourceType, TurnPhase } from '../game/types';
+import { getHeldDevCards, countHeldDevCards } from '../game/rules';
 
 const RESOURCES: { type: ResourceType; label: string; emoji: string }[] = [
   { type: 'brick', label: 'Brick', emoji: '🧱' },
@@ -28,7 +29,7 @@ const CARD_LABELS: Record<string, { name: string; emoji: string }> = {
 };
 
 /**
- * Prominent development-card panel: lists held cards, playable before/after roll.
+ * Lists every held development card individually and exposes play actions.
  */
 export default function DevCardPanel({
   player,
@@ -43,25 +44,19 @@ export default function DevCardPanel({
   const [yopPicks, setYopPicks] = useState<ResourceType[]>([]);
   const [monoPick, setMonoPick] = useState<ResourceType | null>(null);
 
-  // Held cards the owner can see (VPs stay unplayed so they remain visible).
-  const held = player.devCards.filter(c => c.type === 'victory_point' || !c.played);
-  if (held.length === 0) return null;
+  const held = getHeldDevCards(player);
+  const heldCount = countHeldDevCards(player);
+
+  // Always show the panel once you've ever held cards, or currently hold any.
+  // If empty, still hide to save space.
+  if (heldCount === 0 && player.playedKnights === 0) return null;
 
   const canActPhase = phase === 'roll' || phase === 'trade' || phase === 'build';
   const alreadyPlayed = player.devCardsPlayedThisTurn >= 1;
   const canPlay = isMyTurn && canActPhase && !alreadyPlayed;
 
   const playable = (type: string) =>
-    player.devCards.some(c => c.type === type && !c.played && !c.boughtThisTurn);
-
-  const counts: Record<string, { total: number; playable: number }> = {};
-  for (const c of held) {
-    if (!counts[c.type]) counts[c.type] = { total: 0, playable: 0 };
-    counts[c.type].total++;
-    if (!c.played && !c.boughtThisTurn && c.type !== 'victory_point') {
-      counts[c.type].playable++;
-    }
-  }
+    player.devCards.some(c => c.type === type && !c.played && !c.boughtThisTurn && c.type !== 'victory_point');
 
   const toggleYop = (r: ResourceType) => {
     setYopPicks(prev => {
@@ -74,8 +69,8 @@ export default function DevCardPanel({
     <div style={styles.container}>
       <button style={styles.toggle} onClick={() => setShow(!show)}>
         {show ? '▼' : '▶'} Development Cards
-        <span style={styles.badge}>{held.length}</span>
-        {canPlay && Object.values(counts).some(c => c.playable > 0) && (
+        <span style={styles.badge}>{heldCount}</span>
+        {canPlay && held.some(c => !c.boughtThisTurn && c.type !== 'victory_point') && !alreadyPlayed && (
           <span style={styles.playHint}>playable now</span>
         )}
       </button>
@@ -92,23 +87,32 @@ export default function DevCardPanel({
             <div style={styles.note}>Already played a development card this turn.</div>
           )}
 
-          {/* Card chips */}
-          <div style={styles.summary}>
-            {Object.entries(counts).map(([type, { total, playable: nPlay }]) => {
-              const meta = CARD_LABELS[type] || { name: type, emoji: '📜' };
-              const locked = total - nPlay;
+          {/* Every held card listed individually */}
+          <div style={styles.cardList}>
+            {held.length === 0 && (
+              <span style={styles.empty}>No development cards in hand</span>
+            )}
+            {held.map((c, i) => {
+              const meta = CARD_LABELS[c.type] || { name: c.type, emoji: '📜' };
+              const isNew = !!c.boughtThisTurn;
               return (
-                <span key={type} style={styles.summaryChip}>
-                  {meta.emoji} {meta.name} ×{total}
-                  {type !== 'victory_point' && locked > 0 && nPlay === 0 ? (
-                    <span style={styles.locked}> (next turn)</span>
-                  ) : null}
-                </span>
+                <div key={c.id || `card-${i}`} style={styles.cardItem}>
+                  <span style={styles.cardEmoji}>{meta.emoji}</span>
+                  <span style={styles.cardName}>{meta.name}</span>
+                  {isNew && <span style={styles.newTag}>bought this turn</span>}
+                  {c.type === 'victory_point' && <span style={styles.vpTag}>secret +1 VP</span>}
+                </div>
               );
             })}
           </div>
 
-          {/* Knight */}
+          {player.playedKnights > 0 && (
+            <div style={styles.armyNote}>
+              ⚔️ {player.playedKnights} knight{player.playedKnights === 1 ? '' : 's'} already played (largest army)
+            </div>
+          )}
+
+          {/* Actions */}
           {playable('knight') && (
             <button
               style={{ ...styles.actionBtn, ...(!canPlay ? styles.disabled : {}) }}
@@ -119,7 +123,6 @@ export default function DevCardPanel({
             </button>
           )}
 
-          {/* Road Building */}
           {playable('road_building') && (
             <button
               style={{ ...styles.actionBtn, ...(!canPlay ? styles.disabled : {}) }}
@@ -130,7 +133,6 @@ export default function DevCardPanel({
             </button>
           )}
 
-          {/* Year of Plenty */}
           {playable('year_of_plenty') && (
             <div style={styles.block}>
               <div style={styles.label}>
@@ -177,7 +179,6 @@ export default function DevCardPanel({
             </div>
           )}
 
-          {/* Monopoly */}
           {playable('monopoly') && (
             <div style={styles.block}>
               <div style={styles.label}>Monopoly — take all of one resource from everyone</div>
@@ -211,12 +212,6 @@ export default function DevCardPanel({
               </button>
             </div>
           )}
-
-          {counts.victory_point && (
-            <div style={styles.vpNote}>
-              🏆 Victory Point cards stay secret and count toward your score.
-            </div>
-          )}
         </div>
       )}
     </div>
@@ -247,12 +242,18 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11, color: '#ffd700', background: 'rgba(0,0,0,0.25)',
     borderRadius: 6, padding: '6px 8px',
   },
-  summary: { display: 'flex', flexWrap: 'wrap', gap: 4 },
-  summaryChip: {
-    background: '#1a1a2e', border: '1px solid #3498db', borderRadius: 6,
-    padding: '4px 8px', fontSize: 11, color: '#e0e0e0',
+  cardList: { display: 'flex', flexDirection: 'column', gap: 4 },
+  cardItem: {
+    display: 'flex', alignItems: 'center', gap: 8,
+    background: '#1a1a2e', borderRadius: 6, padding: '8px 10px',
+    border: '1px solid #3498db',
   },
-  locked: { color: '#8890a0', fontSize: 10 },
+  cardEmoji: { fontSize: 16 },
+  cardName: { fontSize: 13, fontWeight: 'bold', color: '#e0e0e0', flex: 1 },
+  newTag: { fontSize: 10, color: '#f39c12', fontWeight: 'bold' },
+  vpTag: { fontSize: 10, color: '#ffd700' },
+  empty: { fontSize: 12, color: '#8890a0', padding: 4 },
+  armyNote: { fontSize: 11, color: '#e67e22' },
   actionBtn: {
     padding: '12px 12px', border: '1px solid #e67e22', borderRadius: 8,
     background: '#1a1a2e', color: '#e67e22', fontSize: 13, fontWeight: 'bold', cursor: 'pointer',
@@ -277,5 +278,4 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'transparent', color: '#8890a0', fontSize: 12, cursor: 'pointer',
   },
   disabled: { opacity: 0.4, cursor: 'not-allowed' },
-  vpNote: { fontSize: 11, color: '#8890a0' },
 };

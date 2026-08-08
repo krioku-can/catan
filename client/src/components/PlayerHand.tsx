@@ -1,4 +1,5 @@
 import type { Player, ResourceType } from '../game/types';
+import { countHeldDevCards, getHeldDevCards } from '../game/rules';
 
 interface PlayerHandProps {
   player: Player & {
@@ -18,14 +19,23 @@ const RESOURCE_META: { type: ResourceType; label: string; color: string; emoji: 
   { type: 'ore', label: 'Ore', color: '#7f8c8d', emoji: '⛏️' },
 ];
 
+const DEV_LABELS: Record<string, string> = {
+  knight: '⚔️ Knight',
+  victory_point: '🏆 VP',
+  road_building: '🛣️ Roads',
+  year_of_plenty: '🎁 YoP',
+  monopoly: '👑 Monopoly',
+};
+
 export default function PlayerHand({ player, isMe = false }: PlayerHandProps) {
   const hidden = player._hidden || !isMe;
   const resourceCount = hidden
     ? (player._resourceCount ?? 0)
     : RESOURCE_META.reduce((s, r) => s + (player.resources[r.type] || 0), 0);
+  const held = getHeldDevCards(player);
   const devCount = hidden
-    ? (player._devCardCount ?? player.devCards.filter(c => !c.played).length)
-    : player.devCards.filter(c => !c.played).length;
+    ? (player._devCardCount ?? countHeldDevCards(player))
+    : held.length;
 
   return (
     <div style={styles.container}>
@@ -57,15 +67,24 @@ export default function PlayerHand({ player, isMe = false }: PlayerHandProps) {
               <span style={styles.empty}>No resource cards</span>
             )}
           </div>
-          {devCount > 0 && (
-            <div style={styles.devRow}>
-              {player.devCards.filter(c => !c.played).map((c, i) => (
-                <div key={i} style={styles.devCard}>
-                  📜 {c.type.replace('_', ' ')}
-                </div>
-              ))}
-            </div>
-          )}
+          <div style={styles.devSection}>
+            <div style={styles.devHeader}>Development cards ({devCount})</div>
+            {devCount === 0 ? (
+              <span style={styles.empty}>None</span>
+            ) : (
+              <div style={styles.devRow}>
+                {held.map((c, i) => (
+                  <div key={c.id || `held-${c.type}-${i}`} style={styles.devCard}>
+                    {DEV_LABELS[c.type] || c.type}
+                    {c.boughtThisTurn ? ' · new' : ''}
+                  </div>
+                ))}
+              </div>
+            )}
+            {player.playedKnights > 0 && (
+              <div style={styles.playedNote}>⚔️ {player.playedKnights} knight(s) played (army)</div>
+            )}
+          </div>
         </>
       ) : (
         <div style={styles.hiddenRow}>
@@ -85,7 +104,7 @@ export default function PlayerHand({ player, isMe = false }: PlayerHandProps) {
           </div>
           <div style={styles.hiddenMeta}>
             <span>🃏 {resourceCount} cards</span>
-            {devCount > 0 && <span>📜 {devCount}</span>}
+            <span>📜 {devCount} dev</span>
           </div>
         </div>
       )}
@@ -166,19 +185,31 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#8890a0',
     padding: 8,
   },
+  devSection: {
+    marginTop: 8,
+  },
+  devHeader: {
+    fontSize: 11,
+    color: '#8890a0',
+    marginBottom: 4,
+    fontWeight: 'bold',
+  },
   devRow: {
     display: 'flex',
     flexWrap: 'wrap',
     gap: 4,
-    marginTop: 6,
   },
   devCard: {
     background: '#1a1a2e',
     borderRadius: 6,
     padding: '4px 8px',
     fontSize: 11,
-    textTransform: 'capitalize',
     border: '1px solid #3498db',
+  },
+  playedNote: {
+    fontSize: 11,
+    color: '#e67e22',
+    marginTop: 4,
   },
   hiddenRow: {
     display: 'flex',

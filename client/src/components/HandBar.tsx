@@ -1,4 +1,5 @@
 import type { Player, ResourceType } from '../game/types';
+import { countHeldDevCards } from '../game/rules';
 
 interface HandBarProps {
   player: Player & { _resourceCount?: number; _devCardCount?: number };
@@ -18,7 +19,8 @@ const RESOURCES: { type: ResourceType; label: string; color: string; emoji: stri
  * they hold without opening the Hand tab.
  */
 export default function HandBar({ player }: HandBarProps) {
-  const devCount = player.devCards.filter(c => !c.played).length;
+  // Prefer authoritative held count (includes VPs). Fall back to server stash.
+  const devCount = player._devCardCount ?? countHeldDevCards(player);
   return (
     <div style={styles.bar}>
       {RESOURCES.map(r => {
@@ -38,12 +40,10 @@ export default function HandBar({ player }: HandBarProps) {
           </div>
         );
       })}
-      {devCount > 0 && (
-        <div style={styles.dev}>
-          <span style={styles.emoji}>📜</span>
-          <span style={{ ...styles.count, color: '#3498db' }}>{devCount}</span>
-        </div>
-      )}
+      <div style={styles.dev}>
+        <span style={styles.emoji}>📜</span>
+        <span style={{ ...styles.count, color: devCount > 0 ? '#3498db' : '#4a4a5e' }}>{devCount}</span>
+      </div>
     </div>
   );
 }

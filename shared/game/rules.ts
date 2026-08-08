@@ -18,6 +18,53 @@ const INITIAL_PIECES = {
   cities: 4,
 };
 
+/** Official base-set development deck (25 cards). */
+export const FULL_DEV_DECK: DevelopmentCard['type'][] = [
+  ...Array(14).fill('knight'),
+  ...Array(5).fill('victory_point'),
+  ...Array(2).fill('road_building'),
+  ...Array(2).fill('year_of_plenty'),
+  ...Array(2).fill('monopoly'),
+] as DevelopmentCard['type'][];
+
+function shuffleDeck<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+let _devCardSeq = 0;
+function nextDevCardId(): string {
+  _devCardSeq += 1;
+  return `dev_${Date.now().toString(36)}_${_devCardSeq}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+/** Cards still in hand (not face-up action cards). VPs always count as held. */
+export function getHeldDevCards(player: Player): DevelopmentCard[] {
+  return (player.devCards || []).filter(c => {
+    if (c.type === 'victory_point') return true;
+    return !c.played;
+  });
+}
+
+export function countHeldDevCards(player: Player): number {
+  return getHeldDevCards(player).length;
+}
+
+/** Normalize legacy cards (missing id, VPs incorrectly marked played). */
+export function normalizePlayerDevCards(player: Player): void {
+  for (const c of player.devCards || []) {
+    if (!c.id) c.id = nextDevCardId();
+    // VPs are never "played" as an action — keep them in hand.
+    if (c.type === 'victory_point' && c.played) {
+      c.played = false;
+    }
+  }
+}
+
 export function createInitialState(config: GameConfig): GameState {
   const { tiles, ports, intersections, edges } = generateBoard();
   
@@ -64,6 +111,7 @@ export function createInitialState(config: GameConfig): GameState {
     discardQueue: [],
     pendingDevAction: null,
     pendingDevRoads: 0,
+    devDeck: shuffleDeck(FULL_DEV_DECK),
   };
 }
 
@@ -387,28 +435,27 @@ export function buyDevCard(state: GameState): DevelopmentCard | null {
   if (state.phase !== 'build' && state.phase !== 'trade') return null;
   if (!canAfford(player, BUILDING_COSTS.devCard)) return null;
 
+  // Ensure a real deck exists (legacy states / older saves).
+  if (!state.devDeck || state.devDeck.length === 0) {
+    if (!state.devDeck) state.devDeck = shuffleDeck(FULL_DEV_DECK);
+    if (state.devDeck.length === 0) return null; // deck exhausted
+  }
+
   deductResources(player, BUILDING_COSTS.devCard);
 
-  const types: DevelopmentCard['type'][] = ['knight', 'knight', 'knight', 'knight', 'knight',
-    'knight', 'knight', 'knight', 'knight', 'knight',
-    'knight', 'knight', 'knight', 'knight',
-    'victory_point', 'victory_point', 'victory_point', 'victory_point', 'victory_point',
-    'road_building', 'road_building',
-    'year_of_plenty', 'year_of_plenty',
-    'monopoly', 'monopoly',
-  ];
-  
+  const type = state.devDeck.pop()!;
   const card: DevelopmentCard = {
-    type: types[Math.floor(Math.random() * types.length)],
+    id: nextDevCardId(),
+    type,
     played: false,
     boughtThisTurn: true,
   };
 
   player.devCards.push(card);
   player.boughtDevCardThisTurn = true;
-  
+
   // Victory point cards stay private but still count toward your score.
-  // Do NOT mark played — owner should still see them in hand.
+  // Never mark them played — they remain in hand until game end.
   if (card.type === 'victory_point') {
     player.victoryPoints += 1;
   }
@@ -797,6 +844,19 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
   }
 
   if (state.phase === 'build') {
+    // Finish free Road Building placements first.
+    if (state.pendingDevAction === 'road_building' && state.pendingDevRoads > 0) {
+      const freeSpots = Object.values(state.edges)
+        .filter(e => !e.road && canPlaceRoad(e.key, player.color, state.edges, state.intersections));
+      if (player.roadsRemaining > 0 && freeSpots.length > 0) {
+        const pick = freeSpots[Math.floor(Math.random() * freeSpots.length)];
+        return { action: 'place_road', data: { key: pick.key } };
+      }
+      // Can't place more free roads — clear the pending action so we don't stall.
+      state.pendingDevAction = null;
+      state.pendingDevRoads = 0;
+    }
+
     // Try to build something
     // Priority: city > settlement > dev card > road
 
@@ -822,8 +882,9 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
       return { action: 'place_settlement', data: { key: pick.key } };
     }
 
-    // Check dev cards
-    if (canAfford(player, { ore: 1, wool: 1, grain: 1 })) {
+    // Check dev cards — only if the deck still has cards
+    const deckLeft = (state.devDeck || []).length;
+    if (deckLeft > 0 && canAfford(player, { ore: 1, wool: 1, grain: 1 })) {
       return { action: 'buy_dev_card' };
     }
 
@@ -841,7 +902,7 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
     const canStillRoad = player.roadsRemaining > 0;
     const canStillSett = player.settlementsRemaining > 0;
     const canStillCity = player.citiesRemaining > 0;
-    const canStillDev = true;
+    const canStillDev = deckLeft > 0;
 
     // Figure out the scarcest resource among everything that could be built.
     const scarcity: Record<string, number> = { brick: 0, lumber: 0, wool: 0, grain: 0, ore: 0 };

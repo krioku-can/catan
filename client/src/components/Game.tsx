@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { GameState, GameConfig, PlayerColor, ResourceType } from '../game/types';
-import { createInitialState, getCurrentPlayer, getPlayerByColor, executeTrade, executeBankTrade, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly } from '../game/rules';
+import { createInitialState, getCurrentPlayer, getPlayerByColor, executeTrade, executeBankTrade, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, countHeldDevCards } from '../game/rules';
 import { getHexCorners } from '../game/board';
 import Board from './Board';
 import PlayerHand from './PlayerHand';
@@ -693,7 +693,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
                       _hidden: true,
                       _resourceCount: (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
                         .reduce((s, r) => s + (p.resources[r] || 0), 0),
-                      _devCardCount: p.devCards.filter(c => !c.played).length,
+                      _devCardCount: countHeldDevCards(p),
                     }}
                     isMe={false}
                   />
