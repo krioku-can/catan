@@ -73,15 +73,21 @@ export default function TradePanel({ gameState, isMyTurn, onTrade }: TradePanelP
           <div style={styles.row}>
             <div style={styles.label}>Give</div>
             <div style={styles.resRow}>
-              {RESOURCE_NAMES.map((r, i) => (
-                <button
-                  key={r}
-                  style={styles.resBtn}
-                  onClick={() => setGive({ [r]: (give[r] || 0) + 1 })}
-                >
-                  {RESOURCE_ICONS[i]} {give[r] || 0}
-                </button>
-              ))}
+              {RESOURCE_NAMES.map((r, i) => {
+                const owned = player.resources[r] || 0;
+                const disabled = owned <= 0;
+                return (
+                  <button
+                    key={r}
+                    style={{ ...styles.resBtn, ...(disabled ? styles.resBtnDisabled : {}) }}
+                    disabled={disabled}
+                    onClick={() => setGive({ [r]: (give[r] || 0) + 1 })}
+                  >
+                    {RESOURCE_ICONS[i]} {give[r] || 0}
+                    <span style={styles.owned}>/{owned}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
           <div style={styles.row}>
@@ -166,6 +172,15 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#e0e0e0',
     cursor: 'pointer',
     fontSize: 13,
+  },
+  resBtnDisabled: {
+    opacity: 0.35,
+    cursor: 'not-allowed',
+  },
+  owned: {
+    fontSize: 10,
+    color: '#8890a0',
+    marginLeft: 2,
   },
   select: {
     width: '100%',
