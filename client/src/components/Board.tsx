@@ -301,11 +301,11 @@ function drawRoad(
 }
 
 /**
- * Official-style harbor (matches physical Catan sea frame):
- * - Short wooden pier sitting in the water
- * - Pier touches the coastal edge (the two harbor corners)
- * - Plaque shows "?" for 3:1 or a resource code for 2:1, plus the ratio
- * Badge is ALWAYS on the water side of the edge.
+ * Harbor visual matching official Catan digital style:
+ * - Small gold plaque sitting in the BLUE water next to a coastal edge
+ * - Two thin pier lines from the two harbor vertices → plaque (a clean V)
+ * - Upright text: "3:1" + "?"  or  "2:1" + resource code (Br/Lu/Wo/Gr/Or)
+ * Never drawn on land hex faces.
  */
 function drawOfficialHarbor(
   ctx: CanvasRenderingContext2D,
@@ -318,66 +318,21 @@ function drawOfficialHarbor(
   const edgeMx = (ax + bx) / 2;
   const edgeMy = (ay + by) / 2;
 
-  // Unit vector from coastal edge midpoint out into water
+  // Direction from coast into water (authoritative — water hex center)
   let ox = waterX - edgeMx;
   let oy = waterY - edgeMy;
   const olen = Math.hypot(ox, oy) || 1;
   ox /= olen;
   oy /= olen;
 
-  // Harbor plaque center: just offshore (like the physical wooden dock tile)
-  const pierLen = size * 0.55;
+  // Plaque center: just off the coastal edge into the water (like the reference)
+  const pierLen = size * 0.62;
   const px = edgeMx + ox * pierLen;
   const py = edgeMy + oy * pierLen;
 
-  // Edge-direction unit vector (along the coast)
-  let tx = bx - ax;
-  let ty = by - ay;
-  const tlen = Math.hypot(tx, ty) || 1;
-  tx /= tlen;
-  ty /= tlen;
-
-  ctx.save();
-
-  // --- Wooden pier legs from each harbor corner to the plaque ---
-  // (Official pieces have two short beams forming a pier)
-  ctx.strokeStyle = '#c4a574';
-  ctx.lineWidth = Math.max(3.5, size * 0.08);
-  ctx.lineCap = 'round';
-  ctx.shadowColor = 'rgba(0,0,0,0.25)';
-  ctx.shadowBlur = 2;
-  ctx.beginPath();
-  ctx.moveTo(ax, ay);
-  ctx.lineTo(px - tx * size * 0.12, py - ty * size * 0.12);
-  ctx.moveTo(bx, by);
-  ctx.lineTo(px + tx * size * 0.12, py + ty * size * 0.12);
-  ctx.stroke();
-  ctx.shadowBlur = 0;
-
-  // --- Wooden plaque (rounded rect), like the real harbor tile ---
-  const pw = size * 0.52;
-  const ph = size * 0.42;
-  const rot = Math.atan2(oy, ox) + Math.PI / 2; // align plaque with coast
-
-  ctx.translate(px, py);
-  ctx.rotate(rot);
-
-  // Plaque body
-  roundRect(ctx, -pw / 2, -ph / 2, pw, ph, size * 0.06);
-  const wood = ctx.createLinearGradient(0, -ph / 2, 0, ph / 2);
-  wood.addColorStop(0, '#e8d5b0');
-  wood.addColorStop(0.5, '#d4bc8e');
-  wood.addColorStop(1, '#c4a574');
-  ctx.fillStyle = wood;
-  ctx.fill();
-  ctx.strokeStyle = '#8b6914';
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-
-  // Resource / ? icon
   const isGeneric = portType === '3:1';
-  let icon = '?';
   let ratio = '3:1';
+  let icon = '?';
   if (!isGeneric) {
     const res = portType.split(':')[2];
     const letters: Record<string, string> = {
@@ -387,29 +342,59 @@ function drawOfficialHarbor(
     ratio = '2:1';
   }
 
-  ctx.fillStyle = '#3a2a12';
+  ctx.save();
+
+  // --- Clean V pier lines (gold) from the two harbor corners to the plaque ---
+  ctx.strokeStyle = '#d4b56a';
+  ctx.lineWidth = Math.max(2.25, size * 0.05);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(ax, ay);
+  ctx.lineTo(px, py);
+  ctx.lineTo(bx, by);
+  ctx.stroke();
+
+  // Soft outer stroke for definition on blue water
+  ctx.strokeStyle = 'rgba(90, 60, 20, 0.35)';
+  ctx.lineWidth = Math.max(3.5, size * 0.07);
+  ctx.globalCompositeOperation = 'destination-over';
+  ctx.beginPath();
+  ctx.moveTo(ax, ay);
+  ctx.lineTo(px, py);
+  ctx.lineTo(bx, by);
+  ctx.stroke();
+  ctx.globalCompositeOperation = 'source-over';
+
+  // --- Upright gold plaque (NO rotation — text always readable) ---
+  const s = size * 0.38; // half-width of plaque
+  // Rounded square
+  roundRect(ctx, px - s, py - s, s * 2, s * 2, s * 0.28);
+  const fill = ctx.createLinearGradient(px, py - s, px, py + s);
+  fill.addColorStop(0, '#f0e0b0');
+  fill.addColorStop(0.45, '#e2c87a');
+  fill.addColorStop(1, '#c9a84c');
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.strokeStyle = '#8a6a28';
+  ctx.lineWidth = 1.75;
+  ctx.stroke();
+
+  // Inner rim
+  roundRect(ctx, px - s + 2, py - s + 2, s * 2 - 4, s * 2 - 4, s * 0.22);
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Text — always screen-upright
+  ctx.fillStyle = '#3a2a10';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  // Top: ratio
-  ctx.font = `bold ${Math.max(9, size * 0.12)}px Arial`;
-  ctx.fillText(ratio, 0, -ph * 0.18);
-  // Bottom: ? or resource code
-  ctx.font = `bold ${Math.max(11, size * 0.15)}px Arial`;
-  ctx.fillText(isGeneric ? '?' : icon, 0, ph * 0.2);
+  ctx.font = `bold ${Math.max(10, size * 0.135)}px system-ui,Segoe UI,Arial`;
+  ctx.fillText(ratio, px, py - s * 0.28);
+  ctx.font = `bold ${Math.max(12, size * 0.17)}px system-ui,Segoe UI,Arial`;
+  ctx.fillText(icon, px, py + s * 0.3);
 
-  ctx.restore();
-
-  // Small coastal markers on the two unlock corners (subtle)
-  ctx.save();
-  for (const [x, y] of [[ax, ay], [bx, by]] as const) {
-    ctx.beginPath();
-    ctx.arc(x, y, Math.max(2.5, size * 0.055), 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(232, 213, 176, 0.85)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(139, 105, 20, 0.7)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-  }
   ctx.restore();
 }
 
