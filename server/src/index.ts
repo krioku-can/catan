@@ -4,7 +4,7 @@ import cors from 'cors';
 import { Server } from 'socket.io';
 import { v4 as uuidv4 } from 'uuid';
 import type { GameState, GameConfig, PlayerColor, ResourceType } from './game/types.js';
-import { createInitialState, getCurrentPlayer, getPlayerByColor, rollDice, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly } from './game/rules.js';
+import { createInitialState, getCurrentPlayer, getPlayerByColor, rollDice, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, executeBankTrade } from './game/rules.js';
 import { getHexCorners, getPortRate } from './game/board.js';
 
 const PORT = parseInt(process.env.PORT || '3001');
@@ -361,26 +361,15 @@ io.on('connection', (socket) => {
       }
       case 'bank_trade': {
         const { give, want } = data;
-        const p = getCurrentPlayer(gs);
-        const giveEntries = Object.entries(give);
-        const wantEntries = Object.entries(want);
+        const giveEntries = Object.entries(give || {});
+        const wantEntries = Object.entries(want || {});
         if (giveEntries.length > 0 && wantEntries.length > 0) {
           const [gRes, gAmt] = giveEntries[0];
-          const [wRes, wAmt] = wantEntries[0];
-          const giveAmount = Number(gAmt) || 0;
-          const wantAmount = Number(wAmt) || 0;
-          // Official rule: the exchange rate depends on the player's ports.
-          // 4:1 without a port, 3:1 with a generic port, 2:1 with a matching
-          // specific port. The client sends the give amount it wants to trade;
-          // we validate it's a valid multiple of the player's best rate.
-          const rate = getPortRate(p.color, gRes as ResourceType, gs.ports, gs.intersections);
-          if (giveAmount >= rate && giveAmount % rate === 0) {
-            const received = Math.floor(giveAmount / rate) * wantAmount;
-            if ((p.resources[gRes as ResourceType] || 0) >= giveAmount) {
-              p.resources[gRes as ResourceType] -= giveAmount;
-              p.resources[wRes as ResourceType] = (p.resources[wRes as ResourceType] || 0) + received;
-            }
-          }
+          const [wRes] = wantEntries[0];
+          const err = executeBankTrade(gs, gRes as ResourceType, Number(gAmt) || 0, wRes as ResourceType);
+          if (err) return;
+        } else {
+          return;
         }
         result = { success: true };
         break;
@@ -580,16 +569,15 @@ function runAITurn(room: Room) {
       break;
     }
     case 'bank_trade': {
-      // AI returns {give: 'res', get: 'res'} — use the player's port rate.
-      const p = getCurrentPlayer(gs);
+      // AI returns {give: 'res', get: 'res'} — one rate unit.
       const give = action.data.give as ResourceType;
       const get = action.data.get as ResourceType;
+      const p = getCurrentPlayer(gs);
       const rate = getPortRate(p.color, give, gs.ports, gs.intersections);
-      if ((p.resources[give] || 0) >= rate) {
-        p.resources[give] -= rate;
-        p.resources[get] = (p.resources[get] || 0) + 1;
+      const err = executeBankTrade(gs, give, rate, get);
+      if (!err) {
+        emitGameToRoom(room, 'bank_trade', { give: { [give]: rate }, want: { [get]: 1 }, success: true });
       }
-      emitGameToRoom(room, 'bank_trade', { give: { [give]: rate }, want: { [get]: 1 }, success: true });
       break;
     }
   }

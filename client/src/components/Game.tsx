@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { GameState, GameConfig, PlayerColor, ResourceType } from '../game/types';
-import { createInitialState, getCurrentPlayer, getPlayerByColor, executeTrade, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly } from '../game/rules';
-import { getHexCorners, getPortRate } from '../game/board';
+import { createInitialState, getCurrentPlayer, getPlayerByColor, executeTrade, executeBankTrade, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly } from '../game/rules';
+import { getHexCorners } from '../game/board';
 import Board from './Board';
 import PlayerHand from './PlayerHand';
 import DiceRoller from './DiceRoller';
@@ -239,11 +239,15 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
       return;
     }
 
-    if ((gameState.phase === 'build' || gameState.phase === 'trade') && selectedAction === 'road') {
+    // Normal roads (selected) or free Road Building placements.
+    const freeRoads = gameState.pendingDevAction === 'road_building' && gameState.pendingDevRoads > 0;
+    if (freeRoads || ((gameState.phase === 'build' || gameState.phase === 'trade') && selectedAction === 'road')) {
       const err = placeRoad(gameState, key);
       if (err === null) {
-        addLog(`${player.name} built a road`);
-        setSelectedAction(null);
+        addLog(freeRoads
+          ? `${player.name} placed a free road (${gameState.pendingDevRoads} left)`
+          : `${player.name} built a road`);
+        if (!freeRoads) setSelectedAction(null);
         setGameState({ ...gameState });
       }
     }
@@ -632,37 +636,34 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
                       onBuyDevCard={handleBuyDevCard}
                       onPlayKnight={handlePlayKnight}
                       onEndTurn={handleEndTurn}
-                      hasKnight={me.devCards.some(c => c.type === 'knight' && !c.played)}
+                      hasKnight={me.devCards.some(c => c.type === 'knight' && !c.played && !c.boughtThisTurn)}
+                      pendingFreeRoads={isMyTurn ? gameState.pendingDevRoads : 0}
                     />
                     <TradePanel
                       gameState={gameState}
                       isMyTurn={isMyTurn}
+                      phase={gameState.phase}
                       onBankTrade={(give, want) => {
-                        // Local (vs-AI) bank trade: apply to the live gameState.
                         const gRes = Object.keys(give)[0] as ResourceType | undefined;
                         const wRes = Object.keys(want)[0] as ResourceType | undefined;
-                        if (gRes && wRes) {
-                          const rate = getPortRate(player.color, gRes, gameState.ports, gameState.intersections);
-                          const giveAmt = give[gRes] || 0;
-                          const wantAmt = want[wRes] || 0;
-                          if (giveAmt >= rate && giveAmt % rate === 0 && (player.resources[gRes] || 0) >= giveAmt) {
-                            const received = Math.floor(giveAmt / rate) * wantAmt;
-                            player.resources[gRes] -= giveAmt;
-                            player.resources[wRes] = (player.resources[wRes] || 0) + received;
-                            addLog(`${player.name} traded ${giveAmt} ${gRes} → ${received} ${wRes}`);
-                          }
+                        if (!gRes || !wRes) return;
+                        const err = executeBankTrade(gameState, gRes, give[gRes] || 0, wRes);
+                        if (err === null) {
+                          addLog(`${player.name} bank-traded ${give[gRes]} ${gRes} → ${want[wRes]} ${wRes}`);
+                          setGameState({ ...gameState });
                         }
-                        setGameState({ ...gameState });
                       }}
                       onProposeTrade={(to, give, want) => {
-                        // Local (vs-AI) domestic trade: add a pending offer.
                         gameState.tradeOffers.push({ from: player.color, to, give, want });
                         addLog(`${player.name} offered a trade to ${getPlayerByColor(gameState, to)?.name}`);
                         setGameState({ ...gameState });
                       }}
                     />
                     <DevCardPanel
-                      player={player}
+                      player={me}
+                      phase={gameState.phase}
+                      isMyTurn={isMyTurn}
+                      onPlayKnight={handlePlayKnight}
                       onPlayRoadBuilding={handlePlayRoadBuilding}
                       onPlayYearOfPlenty={handlePlayYearOfPlenty}
                       onPlayMonopoly={handlePlayMonopoly}

@@ -1,7 +1,7 @@
 // Core game rules and state management
 
 import type { GameState, GameConfig, Player, PlayerColor, ResourceType, DevelopmentCard, HexTile, Edge } from './types';
-import { generateBoard, canPlaceSettlement, canPlaceRoad, getResourceProduction, getAdjacentIntersections, getEdgesForIntersection, getHexCorners } from './board';
+import { generateBoard, canPlaceSettlement, canPlaceRoad, getResourceProduction, getAdjacentIntersections, getEdgesForIntersection, getHexCorners, getPortRate } from './board';
 
 const RESOURCES: ResourceType[] = ['brick', 'lumber', 'wool', 'grain', 'ore'];
 
@@ -297,10 +297,13 @@ export function moveRobber(state: GameState, targetHexQ: number, targetHexR: num
 // Place a road (during normal play)
 export function placeRoad(state: GameState, edgeKey: string): string | null {
   const player = getCurrentPlayer(state);
-  // Official rule: you may build at any point during your turn, including the
-  // trade phase. So accept both 'trade' and 'build'.
-  if (state.phase !== 'build' && state.phase !== 'trade') return 'Not build phase';
-  if (!canAfford(player, BUILDING_COSTS.road)) return 'Cannot afford road';
+  const freeRoadBuilding = state.pendingDevAction === 'road_building' && state.pendingDevRoads > 0;
+  // Official: build during trade/build. Road Building free roads may be placed
+  // immediately after playing the card (including before the roll).
+  if (!freeRoadBuilding && state.phase !== 'build' && state.phase !== 'trade') {
+    return 'Not build phase';
+  }
+  if (!freeRoadBuilding && !canAfford(player, BUILDING_COSTS.road)) return 'Cannot afford road';
   if (player.roadsRemaining <= 0) return 'No roads remaining';
   
   const edge = state.edges[edgeKey];
@@ -314,7 +317,7 @@ export function placeRoad(state: GameState, edgeKey: string): string | null {
   edge.road = player.color;
   player.roadsRemaining--;
   // Road Building card roads are free; otherwise deduct the normal cost.
-  if (state.pendingDevAction === 'road_building') {
+  if (freeRoadBuilding) {
     state.pendingDevRoads--;
     if (state.pendingDevRoads <= 0) {
       state.pendingDevAction = null;
@@ -380,6 +383,7 @@ export function placeCity(state: GameState, intersectionKey: string): string | n
 // Buy development card
 export function buyDevCard(state: GameState): DevelopmentCard | null {
   const player = getCurrentPlayer(state);
+  // Buy only after production (trade/build). Not before the roll.
   if (state.phase !== 'build' && state.phase !== 'trade') return null;
   if (!canAfford(player, BUILDING_COSTS.devCard)) return null;
 
@@ -397,30 +401,37 @@ export function buyDevCard(state: GameState): DevelopmentCard | null {
   const card: DevelopmentCard = {
     type: types[Math.floor(Math.random() * types.length)],
     played: false,
+    boughtThisTurn: true,
   };
 
   player.devCards.push(card);
-  // Official rule: a dev card bought this turn cannot be played until the next turn.
   player.boughtDevCardThisTurn = true;
   
-  // Victory point cards are auto-played
+  // Victory point cards stay private but still count toward your score.
+  // Do NOT mark played — owner should still see them in hand.
   if (card.type === 'victory_point') {
-    card.played = true;
     player.victoryPoints += 1;
   }
 
   return card;
 }
 
+function findPlayableDevCard(player: Player, type: DevelopmentCard['type']): DevelopmentCard | undefined {
+  // Official: one card per turn; cannot play a card bought this turn;
+  // may still play a *different* older card after buying.
+  return player.devCards.find(c => c.type === type && !c.played && !c.boughtThisTurn);
+}
+
 // Play a knight card
 export function playKnight(state: GameState): string | null {
   const player = getCurrentPlayer(state);
-  // Official rule: only one dev card may be played per turn.
+  // Official: may play before or after the roll (not during discard/setup).
+  if (state.phase !== 'roll' && state.phase !== 'trade' && state.phase !== 'build') {
+    return 'Cannot play now';
+  }
   if (player.devCardsPlayedThisTurn >= 1) return 'Only one dev card per turn';
-  // Official rule: a card bought this turn cannot be played until the next turn.
-  if (player.boughtDevCardThisTurn) return 'Cannot play a card you just bought';
-  const knight = player.devCards.find(c => c.type === 'knight' && !c.played);
-  if (!knight) return 'No unplayed knight card';
+  const knight = findPlayableDevCard(player, 'knight');
+  if (!knight) return 'No playable knight card';
 
   knight.played = true;
   player.playedKnights++;
@@ -443,27 +454,31 @@ export function playKnight(state: GameState): string | null {
 // Play a Road Building card: place 2 free roads. Returns error or null.
 export function playRoadBuilding(state: GameState): string | null {
   const player = getCurrentPlayer(state);
+  if (state.phase !== 'roll' && state.phase !== 'trade' && state.phase !== 'build') {
+    return 'Cannot play now';
+  }
   if (player.devCardsPlayedThisTurn >= 1) return 'Only one dev card per turn';
-  if (player.boughtDevCardThisTurn) return 'Cannot play a card you just bought';
-  const card = player.devCards.find(c => c.type === 'road_building' && !c.played);
-  if (!card) return 'No unplayed Road Building card';
+  const card = findPlayableDevCard(player, 'road_building');
+  if (!card) return 'No playable Road Building card';
   if (player.roadsRemaining <= 0) return 'No roads remaining';
 
   card.played = true;
   player.devCardsPlayedThisTurn++;
   // Enter a special build state where the next 2 road placements are free.
   state.pendingDevAction = 'road_building';
-  state.pendingDevRoads = 2;
+  state.pendingDevRoads = Math.min(2, player.roadsRemaining);
   return null;
 }
 
 // Play a Year of Plenty card: take any 2 resources from the bank.
 export function playYearOfPlenty(state: GameState, res1: ResourceType, res2: ResourceType): string | null {
   const player = getCurrentPlayer(state);
+  if (state.phase !== 'roll' && state.phase !== 'trade' && state.phase !== 'build') {
+    return 'Cannot play now';
+  }
   if (player.devCardsPlayedThisTurn >= 1) return 'Only one dev card per turn';
-  if (player.boughtDevCardThisTurn) return 'Cannot play a card you just bought';
-  const card = player.devCards.find(c => c.type === 'year_of_plenty' && !c.played);
-  if (!card) return 'No unplayed Year of Plenty card';
+  const card = findPlayableDevCard(player, 'year_of_plenty');
+  if (!card) return 'No playable Year of Plenty card';
 
   card.played = true;
   player.devCardsPlayedThisTurn++;
@@ -474,10 +489,12 @@ export function playYearOfPlenty(state: GameState, res1: ResourceType, res2: Res
 // Play a Monopoly card: take all of one resource from all other players.
 export function playMonopoly(state: GameState, resource: ResourceType): string | null {
   const player = getCurrentPlayer(state);
+  if (state.phase !== 'roll' && state.phase !== 'trade' && state.phase !== 'build') {
+    return 'Cannot play now';
+  }
   if (player.devCardsPlayedThisTurn >= 1) return 'Only one dev card per turn';
-  if (player.boughtDevCardThisTurn) return 'Cannot play a card you just bought';
-  const card = player.devCards.find(c => c.type === 'monopoly' && !c.played);
-  if (!card) return 'No unplayed Monopoly card';
+  const card = findPlayableDevCard(player, 'monopoly');
+  if (!card) return 'No playable Monopoly card';
 
   card.played = true;
   player.devCardsPlayedThisTurn++;
@@ -494,26 +511,49 @@ export function playMonopoly(state: GameState, resource: ResourceType): string |
   return null;
 }
 
+/** Maritime/bank trade: give multiples of the player's best port rate for one resource, get that many of another. */
+export function executeBankTrade(
+  state: GameState,
+  giveRes: ResourceType,
+  giveAmt: number,
+  wantRes: ResourceType,
+): string | null {
+  const player = getCurrentPlayer(state);
+  if (state.phase !== 'trade' && state.phase !== 'build') return 'Not trade phase';
+  if (giveRes === wantRes) return 'Must trade for a different resource';
+  if (giveAmt <= 0) return 'Invalid amount';
+  const rate = getPortRate(player.color, giveRes, state.ports, state.intersections);
+  if (giveAmt < rate || giveAmt % rate !== 0) return `Must give multiples of ${rate}`;
+  if ((player.resources[giveRes] || 0) < giveAmt) return 'Not enough resources';
+  const received = Math.floor(giveAmt / rate);
+  player.resources[giveRes] -= giveAmt;
+  player.resources[wantRes] = (player.resources[wantRes] || 0) + received;
+  return null;
+}
+
 // End turn
 export function endTurn(state: GameState): void {
   // Reset per-turn dev card flags for the player who just finished.
   const ending = getCurrentPlayer(state);
   ending.devCardsPlayedThisTurn = 0;
   ending.boughtDevCardThisTurn = false;
+  for (const c of ending.devCards) {
+    c.boughtThisTurn = false;
+  }
   state.pendingDevAction = null;
   state.pendingDevRoads = 0;
+  state.tradeOffers = [];
+  state.dice = null;
+
+  // Official: game ends when a player reaches 10 VP on their turn.
+  if (ending.victoryPoints >= 10) {
+    state.winner = ending.color;
+    state.phase = 'build';
+    return;
+  }
 
   state.currentTurn = (state.currentTurn + 1) % state.players.length;
   state.phase = 'roll';
-  state.dice = null;
-  state.tradeOffers = [];
-
-  // Check for winner
-  const current = getCurrentPlayer(state);
-  if (current.victoryPoints >= 10) {
-    state.winner = current.color;
-    state.phase = 'build'; // keep in build phase, game over
-  }
 }
 
 // Setup phase advancement

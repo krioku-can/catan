@@ -56,11 +56,12 @@ export default function OnlineGame() {
   }, [selectedAction, sendAction]);
 
   const handleEdgeClick = useCallback((key: string) => {
-    if (selectedAction === 'road') {
+    const freeRoads = gameState?.pendingDevAction === 'road_building' && (gameState?.pendingDevRoads || 0) > 0;
+    if (freeRoads || selectedAction === 'road') {
       sendAction('place_road', { key });
-      setSelectedAction(null);
+      if (!freeRoads) setSelectedAction(null);
     }
-  }, [selectedAction, sendAction]);
+  }, [selectedAction, sendAction, gameState]);
 
   const handleRollDice = useCallback(() => {
     sendAction('roll_dice');
@@ -246,16 +247,21 @@ export default function OnlineGame() {
                     onBuyDevCard={handleBuyDevCard}
                     onPlayKnight={handlePlayKnight}
                     onEndTurn={handleEndTurn}
-                    hasKnight={player.devCards.some(c => c.type === 'knight' && !c.played)}
+                    hasKnight={player.devCards.some(c => c.type === 'knight' && !c.played && !c.boughtThisTurn)}
+                    pendingFreeRoads={isMyTurn ? gameState.pendingDevRoads : 0}
                   />
                   <TradePanel
                     gameState={gameState}
                     isMyTurn={isMyTurn}
+                    phase={gameState.phase}
                     onBankTrade={handleBankTrade}
                     onProposeTrade={handleProposeTrade}
                   />
                   <DevCardPanel
-                    player={player}
+                    player={myPlayer || player}
+                    phase={gameState.phase}
+                    isMyTurn={isMyTurn}
+                    onPlayKnight={handlePlayKnight}
                     onPlayRoadBuilding={handlePlayRoadBuilding}
                     onPlayYearOfPlenty={handlePlayYearOfPlenty}
                     onPlayMonopoly={handlePlayMonopoly}

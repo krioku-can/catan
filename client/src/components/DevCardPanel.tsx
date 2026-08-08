@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Player, ResourceType } from '../game/types';
+import type { Player, ResourceType, TurnPhase } from '../game/types';
 
 const RESOURCES: { type: ResourceType; label: string; emoji: string }[] = [
   { type: 'brick', label: 'Brick', emoji: '🧱' },
@@ -11,101 +11,186 @@ const RESOURCES: { type: ResourceType; label: string; emoji: string }[] = [
 
 interface DevCardPanelProps {
   player: Player;
+  phase: TurnPhase;
+  isMyTurn: boolean;
+  onPlayKnight: () => void;
   onPlayRoadBuilding: () => void;
   onPlayYearOfPlenty: (r1: ResourceType, r2: ResourceType) => void;
   onPlayMonopoly: (r: ResourceType) => void;
 }
 
-const CARD_LABELS: Record<string, string> = {
-  knight: 'Knight',
-  road_building: 'Road Building',
-  year_of_plenty: 'Year of Plenty',
-  monopoly: 'Monopoly',
-  victory_point: 'Victory Point',
+const CARD_LABELS: Record<string, { name: string; emoji: string }> = {
+  knight: { name: 'Knight', emoji: '⚔️' },
+  road_building: { name: 'Road Building', emoji: '🛣️' },
+  year_of_plenty: { name: 'Year of Plenty', emoji: '🎁' },
+  monopoly: { name: 'Monopoly', emoji: '👑' },
+  victory_point: { name: 'Victory Point', emoji: '🏆' },
 };
 
 /**
- * Panel for playing development cards. Always visible when the player holds
- * any unplayed dev cards (including Knights), with a count badge on the toggle.
+ * Prominent development-card panel: lists held cards, playable before/after roll.
  */
-export default function DevCardPanel({ player, onPlayRoadBuilding, onPlayYearOfPlenty, onPlayMonopoly }: DevCardPanelProps) {
-  const [show, setShow] = useState(false);
-  const [yopPick, setYopPick] = useState<ResourceType | null>(null);
+export default function DevCardPanel({
+  player,
+  phase,
+  isMyTurn,
+  onPlayKnight,
+  onPlayRoadBuilding,
+  onPlayYearOfPlenty,
+  onPlayMonopoly,
+}: DevCardPanelProps) {
+  const [show, setShow] = useState(true);
+  const [yopPicks, setYopPicks] = useState<ResourceType[]>([]);
   const [monoPick, setMonoPick] = useState<ResourceType | null>(null);
 
-  const unplayed = player.devCards.filter(c => !c.played);
-  const hasRoadBuilding = unplayed.some(c => c.type === 'road_building');
-  const hasYearOfPlenty = unplayed.some(c => c.type === 'year_of_plenty');
-  const hasMonopoly = unplayed.some(c => c.type === 'monopoly');
-  const hasKnight = unplayed.some(c => c.type === 'knight');
+  // Held cards the owner can see (VPs stay unplayed so they remain visible).
+  const held = player.devCards.filter(c => c.type === 'victory_point' || !c.played);
+  if (held.length === 0) return null;
 
-  if (unplayed.length === 0) return null;
+  const canActPhase = phase === 'roll' || phase === 'trade' || phase === 'build';
+  const alreadyPlayed = player.devCardsPlayedThisTurn >= 1;
+  const canPlay = isMyTurn && canActPhase && !alreadyPlayed;
 
-  // Count each card type for the summary row.
-  const counts: Record<string, number> = {};
-  unplayed.forEach(c => { counts[c.type] = (counts[c.type] || 0) + 1; });
+  const playable = (type: string) =>
+    player.devCards.some(c => c.type === type && !c.played && !c.boughtThisTurn);
+
+  const counts: Record<string, { total: number; playable: number }> = {};
+  for (const c of held) {
+    if (!counts[c.type]) counts[c.type] = { total: 0, playable: 0 };
+    counts[c.type].total++;
+    if (!c.played && !c.boughtThisTurn && c.type !== 'victory_point') {
+      counts[c.type].playable++;
+    }
+  }
+
+  const toggleYop = (r: ResourceType) => {
+    setYopPicks(prev => {
+      if (prev.length >= 2) return [r];
+      return [...prev, r];
+    });
+  };
 
   return (
     <div style={styles.container}>
       <button style={styles.toggle} onClick={() => setShow(!show)}>
-        {show ? '▼' : '▶'} Dev Cards
-        <span style={styles.badge}>{unplayed.length}</span>
+        {show ? '▼' : '▶'} Development Cards
+        <span style={styles.badge}>{held.length}</span>
+        {canPlay && Object.values(counts).some(c => c.playable > 0) && (
+          <span style={styles.playHint}>playable now</span>
+        )}
       </button>
+
       {show && (
         <div style={styles.panel}>
-          {/* Summary of all held cards */}
-          <div style={styles.summary}>
-            {Object.entries(counts).map(([type, n]) => (
-              <span key={type} style={styles.summaryChip}>
-                📜 {CARD_LABELS[type] || type} ×{n}
-              </span>
-            ))}
-          </div>
-
-          {hasKnight && (
-            <div style={styles.knightNote}>
-              ⚔️ Play Knights from the Build menu (⚔️ button) to build the largest army.
-            </div>
+          {!isMyTurn && (
+            <div style={styles.note}>Your cards — play them on your turn (before or after rolling).</div>
+          )}
+          {isMyTurn && phase === 'roll' && (
+            <div style={styles.note}>You can play one card before rolling.</div>
+          )}
+          {alreadyPlayed && isMyTurn && (
+            <div style={styles.note}>Already played a development card this turn.</div>
           )}
 
-          {hasRoadBuilding && (
-            <button style={styles.actionBtn} onClick={onPlayRoadBuilding}>
-              🛣️ Road Building (2 free roads)
+          {/* Card chips */}
+          <div style={styles.summary}>
+            {Object.entries(counts).map(([type, { total, playable: nPlay }]) => {
+              const meta = CARD_LABELS[type] || { name: type, emoji: '📜' };
+              const locked = total - nPlay;
+              return (
+                <span key={type} style={styles.summaryChip}>
+                  {meta.emoji} {meta.name} ×{total}
+                  {type !== 'victory_point' && locked > 0 && nPlay === 0 ? (
+                    <span style={styles.locked}> (next turn)</span>
+                  ) : null}
+                </span>
+              );
+            })}
+          </div>
+
+          {/* Knight */}
+          {playable('knight') && (
+            <button
+              style={{ ...styles.actionBtn, ...(!canPlay ? styles.disabled : {}) }}
+              disabled={!canPlay}
+              onClick={onPlayKnight}
+            >
+              ⚔️ Play Knight — move the robber
             </button>
           )}
 
-          {hasYearOfPlenty && (
+          {/* Road Building */}
+          {playable('road_building') && (
+            <button
+              style={{ ...styles.actionBtn, ...(!canPlay ? styles.disabled : {}) }}
+              disabled={!canPlay}
+              onClick={onPlayRoadBuilding}
+            >
+              🛣️ Play Road Building — 2 free roads
+            </button>
+          )}
+
+          {/* Year of Plenty */}
+          {playable('year_of_plenty') && (
             <div style={styles.block}>
-              <div style={styles.label}>Year of Plenty — pick 2 resources:</div>
+              <div style={styles.label}>
+                Year of Plenty — pick 2 resources
+                {yopPicks.length > 0 && (
+                  <span style={styles.picks}>
+                    {' '}({yopPicks.map(r => RESOURCES.find(x => x.type === r)?.emoji).join('')})
+                  </span>
+                )}
+              </div>
               <div style={styles.resRow}>
                 {RESOURCES.map(r => (
                   <button
                     key={r.type}
-                    style={{ ...styles.resBtn, ...(yopPick === r.type ? styles.resBtnActive : {}) }}
-                    onClick={() => setYopPick(yopPick === r.type ? null : r.type)}
+                    style={{
+                      ...styles.resBtn,
+                      ...(yopPicks.includes(r.type) ? styles.resBtnActive : {}),
+                      ...(!canPlay ? styles.disabled : {}),
+                    }}
+                    disabled={!canPlay}
+                    onClick={() => toggleYop(r.type)}
                   >
                     {r.emoji}
                   </button>
                 ))}
               </div>
-              <button
-                style={{ ...styles.playBtn, ...(yopPick ? {} : styles.playBtnDisabled) }}
-                disabled={!yopPick}
-                onClick={() => { if (yopPick) { onPlayYearOfPlenty(yopPick, yopPick); setYopPick(null); } }}
-              >
-                Play (2× {yopPick ? RESOURCES.find(r => r.type === yopPick)?.emoji : '?'})
-              </button>
+              <div style={styles.rowBtns}>
+                <button
+                  style={{ ...styles.playBtn, ...(yopPicks.length === 2 && canPlay ? {} : styles.disabled) }}
+                  disabled={yopPicks.length !== 2 || !canPlay}
+                  onClick={() => {
+                    if (yopPicks.length === 2) {
+                      onPlayYearOfPlenty(yopPicks[0], yopPicks[1]);
+                      setYopPicks([]);
+                    }
+                  }}
+                >
+                  Play Year of Plenty
+                </button>
+                {yopPicks.length > 0 && (
+                  <button style={styles.clearBtn} onClick={() => setYopPicks([])}>Clear</button>
+                )}
+              </div>
             </div>
           )}
 
-          {hasMonopoly && (
+          {/* Monopoly */}
+          {playable('monopoly') && (
             <div style={styles.block}>
-              <div style={styles.label}>Monopoly — take all of one resource:</div>
+              <div style={styles.label}>Monopoly — take all of one resource from everyone</div>
               <div style={styles.resRow}>
                 {RESOURCES.map(r => (
                   <button
                     key={r.type}
-                    style={{ ...styles.resBtn, ...(monoPick === r.type ? styles.resBtnActive : {}) }}
+                    style={{
+                      ...styles.resBtn,
+                      ...(monoPick === r.type ? styles.resBtnActive : {}),
+                      ...(!canPlay ? styles.disabled : {}),
+                    }}
+                    disabled={!canPlay}
                     onClick={() => setMonoPick(monoPick === r.type ? null : r.type)}
                   >
                     {r.emoji}
@@ -113,12 +198,23 @@ export default function DevCardPanel({ player, onPlayRoadBuilding, onPlayYearOfP
                 ))}
               </div>
               <button
-                style={{ ...styles.playBtn, ...(monoPick ? {} : styles.playBtnDisabled) }}
-                disabled={!monoPick}
-                onClick={() => { if (monoPick) { onPlayMonopoly(monoPick); setMonoPick(null); } }}
+                style={{ ...styles.playBtn, ...(monoPick && canPlay ? {} : styles.disabled) }}
+                disabled={!monoPick || !canPlay}
+                onClick={() => {
+                  if (monoPick) {
+                    onPlayMonopoly(monoPick);
+                    setMonoPick(null);
+                  }
+                }}
               >
                 Play Monopoly
               </button>
+            </div>
+          )}
+
+          {counts.victory_point && (
+            <div style={styles.vpNote}>
+              🏆 Victory Point cards stay secret and count toward your score.
             </div>
           )}
         </div>
@@ -128,42 +224,58 @@ export default function DevCardPanel({ player, onPlayRoadBuilding, onPlayYearOfP
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  container: { background: '#0f3460', borderRadius: 8, overflow: 'hidden' },
+  container: {
+    background: 'linear-gradient(180deg, #1a3a5c 0%, #0f3460 100%)',
+    borderRadius: 8,
+    overflow: 'hidden',
+    border: '1px solid #e67e22',
+  },
   toggle: {
     width: '100%', padding: '10px 12px', border: 'none', background: 'transparent',
     color: '#e0e0e0', fontSize: 14, fontWeight: 'bold', cursor: 'pointer', textAlign: 'left',
-    display: 'flex', alignItems: 'center', gap: 8,
+    display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
   },
   badge: {
     background: '#e67e22', color: 'white', borderRadius: 10,
     padding: '1px 8px', fontSize: 12, fontWeight: 'bold',
+  },
+  playHint: {
+    fontSize: 11, color: '#2ecc71', fontWeight: 'normal', marginLeft: 'auto',
+  },
+  panel: { padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: 8 },
+  note: {
+    fontSize: 11, color: '#ffd700', background: 'rgba(0,0,0,0.25)',
+    borderRadius: 6, padding: '6px 8px',
   },
   summary: { display: 'flex', flexWrap: 'wrap', gap: 4 },
   summaryChip: {
     background: '#1a1a2e', border: '1px solid #3498db', borderRadius: 6,
     padding: '4px 8px', fontSize: 11, color: '#e0e0e0',
   },
-  knightNote: {
-    fontSize: 11, color: '#8890a0', background: '#1a1a2e',
-    borderRadius: 6, padding: '6px 8px',
-  },
-  panel: { padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: 8 },
+  locked: { color: '#8890a0', fontSize: 10 },
   actionBtn: {
-    padding: '10px 12px', border: '1px solid #e67e22', borderRadius: 8,
+    padding: '12px 12px', border: '1px solid #e67e22', borderRadius: 8,
     background: '#1a1a2e', color: '#e67e22', fontSize: 13, fontWeight: 'bold', cursor: 'pointer',
   },
   block: { display: 'flex', flexDirection: 'column', gap: 6 },
   label: { fontSize: 11, color: '#8890a0' },
+  picks: { color: '#ffd700', fontWeight: 'bold' },
   resRow: { display: 'flex', gap: 4, flexWrap: 'wrap' },
   resBtn: {
-    padding: '6px 10px', border: '1px solid #1a1a2e', borderRadius: 6,
-    background: '#1a1a2e', color: '#e0e0e0', cursor: 'pointer', fontSize: 15,
+    padding: '8px 12px', border: '1px solid #1a1a2e', borderRadius: 6,
+    background: '#1a1a2e', color: '#e0e0e0', cursor: 'pointer', fontSize: 16,
   },
   resBtnActive: { borderColor: '#ffd700', background: '#16213e' },
   playBtn: {
-    padding: '8px 12px', border: 'none', borderRadius: 6,
+    padding: '10px 12px', border: 'none', borderRadius: 6,
     background: 'linear-gradient(135deg, #3498db, #2980b9)',
     color: 'white', fontSize: 13, fontWeight: 'bold', cursor: 'pointer',
   },
-  playBtnDisabled: { opacity: 0.4, cursor: 'not-allowed' },
+  rowBtns: { display: 'flex', gap: 6 },
+  clearBtn: {
+    padding: '10px 12px', border: '1px solid #8890a0', borderRadius: 6,
+    background: 'transparent', color: '#8890a0', fontSize: 12, cursor: 'pointer',
+  },
+  disabled: { opacity: 0.4, cursor: 'not-allowed' },
+  vpNote: { fontSize: 11, color: '#8890a0' },
 };

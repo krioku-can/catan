@@ -44,6 +44,8 @@ export interface Edge {
 export interface DevelopmentCard {
   type: 'knight' | 'victory_point' | 'road_building' | 'year_of_plenty' | 'monopoly';
   played: boolean;
+  /** Official rule: cannot play a card on the same turn it was bought. */
+  boughtThisTurn?: boolean;
 }
 
 export interface Player {
@@ -59,7 +61,7 @@ export interface Player {
   isAI: boolean;
   /** Number of dev cards played this turn (enforces 1-per-turn rule). */
   devCardsPlayedThisTurn: number;
-  /** True if the player bought a dev card this turn (can't play one they just bought). */
+  /** @deprecated Prefer per-card boughtThisTurn. Kept for older state. */
   boughtDevCardThisTurn: boolean;
 }
 

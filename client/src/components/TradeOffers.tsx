@@ -68,29 +68,53 @@ export default function TradeOffers({ gameState, myColor, onAccept, onReject, on
                 <div style={styles.counterRow}>
                   <span style={styles.counterLabel}>Give</span>
                   <div style={styles.resRow}>
-                    {RESOURCES.map(r => (
-                      <button
-                        key={r}
-                        style={styles.resBtn}
-                        onClick={() => setGive({ ...give, [r]: (give[r] || 0) + 1 })}
-                      >
-                        {RESOURCE_ICONS[r]} {give[r] || 0}
-                      </button>
-                    ))}
+                    {RESOURCES.map(r => {
+                      const owned = myPlayer?.resources[r] || 0;
+                      const selected = give[r] || 0;
+                      return (
+                        <button
+                          key={r}
+                          style={{ ...styles.resBtn, ...(owned <= 0 ? { opacity: 0.35 } : {}) }}
+                          disabled={owned <= 0}
+                          onClick={() => {
+                            if (selected >= owned) {
+                              const next = { ...give };
+                              delete next[r];
+                              setGive(next);
+                            } else {
+                              setGive({ ...give, [r]: selected + 1 });
+                            }
+                          }}
+                        >
+                          {RESOURCE_ICONS[r]} {selected}/{owned}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
                 <div style={styles.counterRow}>
                   <span style={styles.counterLabel}>Want</span>
                   <div style={styles.resRow}>
-                    {RESOURCES.map(r => (
-                      <button
-                        key={r}
-                        style={styles.resBtn}
-                        onClick={() => setWant({ ...want, [r]: (want[r] || 0) + 1 })}
-                      >
-                        {RESOURCE_ICONS[r]} {want[r] || 0}
-                      </button>
-                    ))}
+                    {RESOURCES.map(r => {
+                      const selected = want[r] || 0;
+                      return (
+                        <button
+                          key={r}
+                          style={styles.resBtn}
+                          onClick={() => {
+                            if (selected >= 3) {
+                              const next = { ...want };
+                              delete next[r];
+                              setWant(next);
+                            } else {
+                              setWant({ ...want, [r]: selected + 1 });
+                            }
+                          }}
+                        >
+                          {RESOURCE_ICONS[r]} {selected}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
                 <div style={styles.counterActions}>
