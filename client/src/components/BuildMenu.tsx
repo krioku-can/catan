@@ -20,7 +20,10 @@ const BUILD_OPTIONS = [
 ];
 
 export default function BuildMenu({ player, phase, isMyTurn, selectedAction, onSelectAction, onBuyDevCard, onPlayKnight, onEndTurn, hasKnight }: BuildMenuProps) {
-  if (phase !== 'build' && phase !== 'trade') return null;
+  // Official rule: you may build and play dev cards at any point during your
+  // turn — including before rolling. So show the menu during roll, trade, and
+  // build phases (but not during setup or discard).
+  if (phase !== 'roll' && phase !== 'build' && phase !== 'trade') return null;
 
   return (
     <div style={styles.container}>
