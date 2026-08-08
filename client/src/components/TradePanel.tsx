@@ -106,15 +106,21 @@ export default function TradePanel({ gameState, isMyTurn, onBankTrade, onPropose
           <div style={styles.row}>
             <div style={styles.label}>Want</div>
             <div style={styles.resRow}>
-              {RESOURCES.map(r => (
-                <button
-                  key={r}
-                  style={styles.resBtn}
-                  onClick={() => setWant({ ...want, [r]: (want[r] || 0) + 1 })}
-                >
-                  {RESOURCE_ICONS[r]} {want[r] || 0}
-                </button>
-              ))}
+              {RESOURCES.map(r => {
+                const selected = want[r] || 0;
+                return (
+                  <button
+                    key={r}
+                    style={styles.resBtn}
+                    onClick={() => {
+                      // Click to add; click again to remove.
+                      setWant({ ...want, [r]: selected > 0 ? 0 : selected + 1 });
+                    }}
+                  >
+                    {RESOURCE_ICONS[r]} {selected}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -147,13 +153,18 @@ export default function TradePanel({ gameState, isMyTurn, onBankTrade, onPropose
             </div>
           )}
 
-          <button
-            style={{ ...styles.tradeBtn, ...(!(tab === 'bank' ? canBankTrade : canPropose) ? styles.tradeBtnDisabled : {}) }}
-            disabled={!(tab === 'bank' ? canBankTrade : canPropose)}
-            onClick={tab === 'bank' ? handleBankTrade : handlePropose}
-          >
-            {tab === 'bank' ? `Trade ${rate}:1` : 'Send Offer'}
-          </button>
+          <div style={styles.btnRow}>
+            <button
+              style={{ ...styles.tradeBtn, ...(!(tab === 'bank' ? canBankTrade : canPropose) ? styles.tradeBtnDisabled : {}) }}
+              disabled={!(tab === 'bank' ? canBankTrade : canPropose)}
+              onClick={tab === 'bank' ? handleBankTrade : handlePropose}
+            >
+              {tab === 'bank' ? `Trade ${rate}:1` : 'Send Offer'}
+            </button>
+            <button style={styles.resetBtn} onClick={reset} title="Clear selection">
+              ↺ Reset
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -197,4 +208,10 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'white', fontSize: 14, fontWeight: 'bold', cursor: 'pointer',
   },
   tradeBtnDisabled: { opacity: 0.4, cursor: 'not-allowed' },
+  btnRow: { display: 'flex', gap: 6 },
+  resetBtn: {
+    padding: '10px 12px', border: '1px solid #8890a0', borderRadius: 6,
+    background: 'transparent', color: '#8890a0', fontSize: 13, fontWeight: 'bold', cursor: 'pointer',
+    flexShrink: 0,
+  },
 };
