@@ -76,6 +76,39 @@ export function getPlayerByColor(state: GameState, color: PlayerColor): Player {
   return state.players.find(p => p.color === color)!;
 }
 
+// Execute a domestic trade between two players. `give` moves from `from` to
+// `to`; `want` moves from `to` to `from`. Returns an error string or null.
+export function executeTrade(
+  state: GameState,
+  from: PlayerColor,
+  to: PlayerColor,
+  give: Partial<Record<ResourceType, number>>,
+  want: Partial<Record<ResourceType, number>>,
+): string | null {
+  const giver = getPlayerByColor(state, from);
+  const taker = getPlayerByColor(state, to);
+  if (!giver || !taker) return 'Invalid player';
+  // Validate both sides have the resources.
+  for (const [r, n] of Object.entries(give || {})) {
+    if ((giver.resources[r as ResourceType] || 0) < (Number(n) || 0)) return 'Not enough resources';
+  }
+  for (const [r, n] of Object.entries(want || {})) {
+    if ((taker.resources[r as ResourceType] || 0) < (Number(n) || 0)) return 'Not enough resources';
+  }
+  // Execute.
+  for (const [r, n] of Object.entries(give || {})) {
+    const amt = Number(n) || 0;
+    giver.resources[r as ResourceType] -= amt;
+    taker.resources[r as ResourceType] = (taker.resources[r as ResourceType] || 0) + amt;
+  }
+  for (const [r, n] of Object.entries(want || {})) {
+    const amt = Number(n) || 0;
+    taker.resources[r as ResourceType] -= amt;
+    giver.resources[r as ResourceType] = (giver.resources[r as ResourceType] || 0) + amt;
+  }
+  return null;
+}
+
 // Check if player can afford something
 export function canAfford(player: Player, cost: Partial<Record<ResourceType, number>>): boolean {
   for (const [resource, amount] of Object.entries(cost)) {
@@ -664,6 +697,35 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
   // Normal play
   if (state.phase === 'roll') {
     return { action: 'roll_dice' };
+  }
+
+  // Respond to any pending domestic trade offers directed at this AI.
+  // The AI accepts if the trade is favorable (it gives away resources it has
+  // plenty of, and receives resources it's short on); otherwise it rejects.
+  const myOffer = state.tradeOffers.find(o => o.to === player.color);
+  if (myOffer) {
+    const from = getPlayerByColor(state, myOffer.from);
+    if (from) {
+      // Count what the AI would give vs receive.
+      const giveTotal = Object.values(myOffer.give || {}).reduce((s, n) => s + (Number(n) || 0), 0);
+      const wantTotal = Object.values(myOffer.want || {}).reduce((s, n) => s + (Number(n) || 0), 0);
+      // Favor trades where the AI gives away fewer cards than it receives,
+      // or where it gives surplus and receives a scarce resource.
+      const surplus = RESOURCES.filter(r => (player.resources[r] || 0) >= 3);
+      const scarce = RESOURCES.filter(r => (player.resources[r] || 0) <= 1);
+      const givesSurplus = Object.keys(myOffer.give || {}).every(r => surplus.includes(r as ResourceType));
+      const getsScarce = Object.keys(myOffer.want || {}).some(r => scarce.includes(r as ResourceType));
+      const favorable = wantTotal >= giveTotal || (givesSurplus && getsScarce);
+      if (favorable) {
+        const err = executeTrade(state, myOffer.from, myOffer.to, myOffer.give, myOffer.want);
+        if (err === null) {
+          state.tradeOffers = state.tradeOffers.filter(o => o !== myOffer);
+          return { action: 'accept_trade', data: { from: myOffer.from } };
+        }
+      }
+      state.tradeOffers = state.tradeOffers.filter(o => o !== myOffer);
+      return { action: 'reject_trade', data: { from: myOffer.from } };
+    }
   }
 
   // Discard phase after a 7: AI discards half its hand automatically.

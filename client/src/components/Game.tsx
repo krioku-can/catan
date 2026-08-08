@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { GameState, GameConfig, PlayerColor, ResourceType } from '../game/types';
-import { createInitialState, getCurrentPlayer, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly } from '../game/rules';
+import { createInitialState, getCurrentPlayer, getPlayerByColor, executeTrade, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly } from '../game/rules';
 import { getHexCorners, getPortRate } from '../game/board';
 import Board from './Board';
 import PlayerHand from './PlayerHand';
@@ -8,6 +8,7 @@ import DiceRoller from './DiceRoller';
 import DiceFlash from './DiceFlash';
 import HandBar from './HandBar';
 import TradePanel from './TradePanel';
+import TradeOffers from './TradeOffers';
 import BuildMenu from './BuildMenu';
 import GameLog from './GameLog';
 import DiscardModal from './DiscardModal';
@@ -552,6 +553,39 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
         />
       )}
 
+      {/* Incoming domestic trade offers (from AI) */}
+      {me && (
+        <TradeOffers
+          gameState={gameState}
+          myColor={me.color}
+          onAccept={(from) => {
+            const offer = gameState.tradeOffers.find(o => o.to === me.color && o.from === from);
+            if (offer) {
+              const err = executeTrade(gameState, offer.from, offer.to, offer.give, offer.want);
+              if (err === null) {
+                gameState.tradeOffers = gameState.tradeOffers.filter(o => o !== offer);
+                addLog(`Trade accepted with ${getPlayerByColor(gameState, from)?.name}`);
+              }
+            }
+            setGameState({ ...gameState });
+          }}
+          onReject={(from) => {
+            gameState.tradeOffers = gameState.tradeOffers.filter(o => !(o.to === me.color && o.from === from));
+            addLog(`Trade rejected with ${getPlayerByColor(gameState, from)?.name}`);
+            setGameState({ ...gameState });
+          }}
+          onCounter={(from, give, want) => {
+            const offer = gameState.tradeOffers.find(o => o.to === me.color && o.from === from);
+            if (offer) {
+              gameState.tradeOffers = gameState.tradeOffers.filter(o => o !== offer);
+              gameState.tradeOffers.push({ from: me.color, to: from, give, want });
+              addLog(`Counter-offer sent to ${getPlayerByColor(gameState, from)?.name}`);
+            }
+            setGameState({ ...gameState });
+          }}
+        />
+      )}
+
       <div style={styles.tabBar}>
         <button
           type="button"
@@ -603,23 +637,27 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
                     <TradePanel
                       gameState={gameState}
                       isMyTurn={isMyTurn}
-                      onTrade={(offer) => {
-                        // Local (vs-AI) bank trade: apply to the live gameState
-                        // and force a re-render so the hand shows fresh counts.
-                        if (offer.target === 'bank') {
-                          const gRes = Object.entries(offer.give)[0];
-                          const wRes = Object.entries(offer.want)[0];
-                          if (gRes && wRes) {
-                            const rate = getPortRate(player.color, gRes[0] as ResourceType, gameState.ports, gameState.intersections);
-                            const giveAmt = gRes[1] || 0;
-                            if (giveAmt >= rate && giveAmt % rate === 0 && (player.resources[gRes[0] as ResourceType] || 0) >= giveAmt) {
-                              const received = Math.floor(giveAmt / rate) * (wRes[1] || 0);
-                              player.resources[gRes[0] as ResourceType] -= giveAmt;
-                              player.resources[wRes[0] as ResourceType] = (player.resources[wRes[0] as ResourceType] || 0) + received;
-                              addLog(`${player.name} traded ${giveAmt} ${gRes[0]} → ${received} ${wRes[0]}`);
-                            }
+                      onBankTrade={(give, want) => {
+                        // Local (vs-AI) bank trade: apply to the live gameState.
+                        const gRes = Object.keys(give)[0] as ResourceType | undefined;
+                        const wRes = Object.keys(want)[0] as ResourceType | undefined;
+                        if (gRes && wRes) {
+                          const rate = getPortRate(player.color, gRes, gameState.ports, gameState.intersections);
+                          const giveAmt = give[gRes] || 0;
+                          const wantAmt = want[wRes] || 0;
+                          if (giveAmt >= rate && giveAmt % rate === 0 && (player.resources[gRes] || 0) >= giveAmt) {
+                            const received = Math.floor(giveAmt / rate) * wantAmt;
+                            player.resources[gRes] -= giveAmt;
+                            player.resources[wRes] = (player.resources[wRes] || 0) + received;
+                            addLog(`${player.name} traded ${giveAmt} ${gRes} → ${received} ${wRes}`);
                           }
                         }
+                        setGameState({ ...gameState });
+                      }}
+                      onProposeTrade={(to, give, want) => {
+                        // Local (vs-AI) domestic trade: add a pending offer.
+                        gameState.tradeOffers.push({ from: player.color, to, give, want });
+                        addLog(`${player.name} offered a trade to ${getPlayerByColor(gameState, to)?.name}`);
                         setGameState({ ...gameState });
                       }}
                     />

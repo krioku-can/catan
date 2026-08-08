@@ -85,15 +85,12 @@ export default function OnlineGame() {
     setRobberMode(true);
   }, [sendAction]);
 
-  const handleTrade = useCallback((offer: { give: Partial<Record<ResourceType, number>>; want: Partial<Record<ResourceType, number>>; target: PlayerColor | 'bank' }) => {
-    if (offer.target === 'bank') {
-      // Online bank trade is server-authoritative: send the action, the server
-      // validates + applies it, and the synced gameState re-renders the hand.
-      sendAction('bank_trade', { give: offer.give, want: offer.want });
-    } else {
-      // Domestic player-to-player trade: send a trade offer to the server.
-      sendAction('propose_trade', { to: offer.target, give: offer.give, want: offer.want });
-    }
+  const handleBankTrade = useCallback((give: Partial<Record<ResourceType, number>>, want: Partial<Record<ResourceType, number>>) => {
+    sendAction('bank_trade', { give, want });
+  }, [sendAction]);
+
+  const handleProposeTrade = useCallback((to: PlayerColor, give: Partial<Record<ResourceType, number>>, want: Partial<Record<ResourceType, number>>) => {
+    sendAction('propose_trade', { to, give, want });
   }, [sendAction]);
 
   const handleDiscard = useCallback((discard: Partial<Record<ResourceType, number>>) => {
@@ -112,12 +109,16 @@ export default function OnlineGame() {
     sendAction('play_monopoly', { resource: r });
   }, [sendAction]);
 
-  const handleAcceptTrade = useCallback(() => {
-    sendAction('accept_trade');
+  const handleAcceptTrade = useCallback((from: PlayerColor) => {
+    sendAction('accept_trade', { from });
   }, [sendAction]);
 
-  const handleRejectTrade = useCallback(() => {
-    sendAction('reject_trade');
+  const handleRejectTrade = useCallback((from: PlayerColor) => {
+    sendAction('reject_trade', { from });
+  }, [sendAction]);
+
+  const handleCounterTrade = useCallback((from: PlayerColor, give: Partial<Record<ResourceType, number>>, want: Partial<Record<ResourceType, number>>) => {
+    sendAction('counter_trade', { from, give, want });
   }, [sendAction]);
 
   const handleSendChat = useCallback(() => {
@@ -197,6 +198,7 @@ export default function OnlineGame() {
           myColor={myPlayer.color}
           onAccept={handleAcceptTrade}
           onReject={handleRejectTrade}
+          onCounter={handleCounterTrade}
         />
       )}
 
@@ -249,7 +251,8 @@ export default function OnlineGame() {
                   <TradePanel
                     gameState={gameState}
                     isMyTurn={isMyTurn}
-                    onTrade={handleTrade}
+                    onBankTrade={handleBankTrade}
+                    onProposeTrade={handleProposeTrade}
                   />
                   <DevCardPanel
                     player={player}

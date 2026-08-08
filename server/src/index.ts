@@ -430,7 +430,7 @@ io.on('connection', (socket) => {
       }
       case 'accept_trade': {
         // The target accepts a pending trade offer from the active player.
-        const offer = gs.tradeOffers.find(o => o.to === conn.color);
+        const offer = gs.tradeOffers.find(o => o.to === conn.color && (!data.from || o.from === data.from));
         if (!offer) return;
         const from = getPlayerByColor(gs, offer.from);
         const to = getPlayerByColor(gs, offer.to);
@@ -455,7 +455,23 @@ io.on('connection', (socket) => {
         break;
       }
       case 'reject_trade': {
-        gs.tradeOffers = gs.tradeOffers.filter(o => o.to !== conn.color);
+        gs.tradeOffers = gs.tradeOffers.filter(o => o.to !== conn.color || (data.from && o.from !== data.from));
+        result = { success: true };
+        break;
+      }
+      case 'counter_trade': {
+        // The target counters a pending offer: replace it with a new offer
+        // from the target back to the original proposer.
+        const offer = gs.tradeOffers.find(o => o.to === conn.color && o.from === data.from);
+        if (!offer) return;
+        const to = getPlayerByColor(gs, offer.to);
+        // Validate the countering player has the resources they're offering.
+        for (const [r, n] of Object.entries(data.give || {})) {
+          if ((to.resources[r as ResourceType] || 0) < (Number(n) || 0)) return;
+        }
+        // Replace the offer with a counter-offer (direction reversed).
+        gs.tradeOffers = gs.tradeOffers.filter(o => o !== offer);
+        gs.tradeOffers.push({ from: offer.to, to: offer.from, give: data.give, want: data.want });
         result = { success: true };
         break;
       }
@@ -557,7 +573,9 @@ function runAITurn(room: Room) {
     case 'place_road':
     case 'place_city':
     case 'buy_dev_card':
-    case 'end_turn': {
+    case 'end_turn':
+    case 'accept_trade':
+    case 'reject_trade': {
       emitGameToRoom(room, action.action, { success: true });
       break;
     }
