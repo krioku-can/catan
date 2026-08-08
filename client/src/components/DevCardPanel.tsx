@@ -16,28 +16,58 @@ interface DevCardPanelProps {
   onPlayMonopoly: (r: ResourceType) => void;
 }
 
+const CARD_LABELS: Record<string, string> = {
+  knight: 'Knight',
+  road_building: 'Road Building',
+  year_of_plenty: 'Year of Plenty',
+  monopoly: 'Monopoly',
+  victory_point: 'Victory Point',
+};
+
 /**
- * Panel for playing non-knight development cards (Road Building, Year of
- * Plenty, Monopoly). Only shows cards the player actually holds.
+ * Panel for playing development cards. Always visible when the player holds
+ * any unplayed dev cards (including Knights), with a count badge on the toggle.
  */
 export default function DevCardPanel({ player, onPlayRoadBuilding, onPlayYearOfPlenty, onPlayMonopoly }: DevCardPanelProps) {
   const [show, setShow] = useState(false);
   const [yopPick, setYopPick] = useState<ResourceType | null>(null);
   const [monoPick, setMonoPick] = useState<ResourceType | null>(null);
 
-  const hasRoadBuilding = player.devCards.some(c => c.type === 'road_building' && !c.played);
-  const hasYearOfPlenty = player.devCards.some(c => c.type === 'year_of_plenty' && !c.played);
-  const hasMonopoly = player.devCards.some(c => c.type === 'monopoly' && !c.played);
+  const unplayed = player.devCards.filter(c => !c.played);
+  const hasRoadBuilding = unplayed.some(c => c.type === 'road_building');
+  const hasYearOfPlenty = unplayed.some(c => c.type === 'year_of_plenty');
+  const hasMonopoly = unplayed.some(c => c.type === 'monopoly');
+  const hasKnight = unplayed.some(c => c.type === 'knight');
 
-  if (!hasRoadBuilding && !hasYearOfPlenty && !hasMonopoly) return null;
+  if (unplayed.length === 0) return null;
+
+  // Count each card type for the summary row.
+  const counts: Record<string, number> = {};
+  unplayed.forEach(c => { counts[c.type] = (counts[c.type] || 0) + 1; });
 
   return (
     <div style={styles.container}>
       <button style={styles.toggle} onClick={() => setShow(!show)}>
         {show ? '▼' : '▶'} Dev Cards
+        <span style={styles.badge}>{unplayed.length}</span>
       </button>
       {show && (
         <div style={styles.panel}>
+          {/* Summary of all held cards */}
+          <div style={styles.summary}>
+            {Object.entries(counts).map(([type, n]) => (
+              <span key={type} style={styles.summaryChip}>
+                📜 {CARD_LABELS[type] || type} ×{n}
+              </span>
+            ))}
+          </div>
+
+          {hasKnight && (
+            <div style={styles.knightNote}>
+              ⚔️ Play Knights from the Build menu (⚔️ button) to build the largest army.
+            </div>
+          )}
+
           {hasRoadBuilding && (
             <button style={styles.actionBtn} onClick={onPlayRoadBuilding}>
               🛣️ Road Building (2 free roads)
@@ -102,6 +132,20 @@ const styles: Record<string, React.CSSProperties> = {
   toggle: {
     width: '100%', padding: '10px 12px', border: 'none', background: 'transparent',
     color: '#e0e0e0', fontSize: 14, fontWeight: 'bold', cursor: 'pointer', textAlign: 'left',
+    display: 'flex', alignItems: 'center', gap: 8,
+  },
+  badge: {
+    background: '#e67e22', color: 'white', borderRadius: 10,
+    padding: '1px 8px', fontSize: 12, fontWeight: 'bold',
+  },
+  summary: { display: 'flex', flexWrap: 'wrap', gap: 4 },
+  summaryChip: {
+    background: '#1a1a2e', border: '1px solid #3498db', borderRadius: 6,
+    padding: '4px 8px', fontSize: 11, color: '#e0e0e0',
+  },
+  knightNote: {
+    fontSize: 11, color: '#8890a0', background: '#1a1a2e',
+    borderRadius: 6, padding: '6px 8px',
   },
   panel: { padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: 8 },
   actionBtn: {

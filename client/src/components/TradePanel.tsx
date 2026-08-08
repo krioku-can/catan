@@ -179,7 +179,6 @@ const styles: Record<string, React.CSSProperties> = {
   },
   panel: {
     padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: 8,
-    maxHeight: '34vh', overflowY: 'auto',
   },
   tabs: { display: 'flex', gap: 6, marginTop: 4 },
   tab: {
