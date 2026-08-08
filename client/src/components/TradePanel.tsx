@@ -161,7 +161,10 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%', padding: '10px 12px', border: 'none', background: 'transparent',
     color: '#e0e0e0', fontSize: 14, fontWeight: 'bold', cursor: 'pointer', textAlign: 'left',
   },
-  panel: { padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: 8 },
+  panel: {
+    padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: 8,
+    maxHeight: '34vh', overflowY: 'auto',
+  },
   tabs: { display: 'flex', gap: 6, marginTop: 4 },
   tab: {
     flex: 1, padding: '8px 10px', border: '1px solid #1a1a2e', borderRadius: 6,
