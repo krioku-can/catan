@@ -264,7 +264,9 @@ export function moveRobber(state: GameState, targetHexQ: number, targetHexR: num
 // Place a road (during normal play)
 export function placeRoad(state: GameState, edgeKey: string): string | null {
   const player = getCurrentPlayer(state);
-  if (state.phase !== 'build') return 'Not build phase';
+  // Official rule: you may build at any point during your turn, including the
+  // trade phase. So accept both 'trade' and 'build'.
+  if (state.phase !== 'build' && state.phase !== 'trade') return 'Not build phase';
   if (!canAfford(player, BUILDING_COSTS.road)) return 'Cannot afford road';
   if (player.roadsRemaining <= 0) return 'No roads remaining';
   
@@ -298,7 +300,7 @@ export function placeRoad(state: GameState, edgeKey: string): string | null {
 // Place a settlement (during normal play)
 export function placeSettlement(state: GameState, intersectionKey: string): string | null {
   const player = getCurrentPlayer(state);
-  if (state.phase !== 'build') return 'Not build phase';
+  if (state.phase !== 'build' && state.phase !== 'trade') return 'Not build phase';
   if (!canAfford(player, BUILDING_COSTS.settlement)) return 'Cannot afford settlement';
   if (player.settlementsRemaining <= 0) return 'No settlements remaining';
 
@@ -324,7 +326,7 @@ export function placeSettlement(state: GameState, intersectionKey: string): stri
 // Upgrade to city
 export function placeCity(state: GameState, intersectionKey: string): string | null {
   const player = getCurrentPlayer(state);
-  if (state.phase !== 'build') return 'Not build phase';
+  if (state.phase !== 'build' && state.phase !== 'trade') return 'Not build phase';
   if (!canAfford(player, BUILDING_COSTS.city)) return 'Cannot afford city';
   if (player.citiesRemaining <= 0) return 'No cities remaining';
 
@@ -345,7 +347,7 @@ export function placeCity(state: GameState, intersectionKey: string): string | n
 // Buy development card
 export function buyDevCard(state: GameState): DevelopmentCard | null {
   const player = getCurrentPlayer(state);
-  if (state.phase !== 'build') return null;
+  if (state.phase !== 'build' && state.phase !== 'trade') return null;
   if (!canAfford(player, BUILDING_COSTS.devCard)) return null;
 
   deductResources(player, BUILDING_COSTS.devCard);

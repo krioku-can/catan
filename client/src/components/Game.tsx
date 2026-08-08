@@ -202,7 +202,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
       return;
     }
 
-    if (gameState.phase === 'build') {
+    if (gameState.phase === 'build' || gameState.phase === 'trade') {
       if (selectedAction === 'settlement') {
         const err = placeSettlement(gameState, key);
         if (err === null) {
@@ -238,7 +238,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
       return;
     }
 
-    if (gameState.phase === 'build' && selectedAction === 'road') {
+    if ((gameState.phase === 'build' || gameState.phase === 'trade') && selectedAction === 'road') {
       const err = placeRoad(gameState, key);
       if (err === null) {
         addLog(`${player.name} built a road`);
