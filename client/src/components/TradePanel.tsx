@@ -81,15 +81,20 @@ export default function TradePanel({ gameState, isMyTurn, onBankTrade, onPropose
             <div style={styles.resRow}>
               {RESOURCES.map(r => {
                 const owned = player.resources[r] || 0;
+                const selected = give[r] || 0;
+                const atMax = selected >= owned;
                 const disabled = owned <= 0;
                 return (
                   <button
                     key={r}
                     style={{ ...styles.resBtn, ...(disabled ? styles.resBtnDisabled : {}) }}
                     disabled={disabled}
-                    onClick={() => setGive({ ...give, [r]: (give[r] || 0) + 1 })}
+                    onClick={() => {
+                      // Click to add; if already at max, click again to remove.
+                      setGive({ ...give, [r]: atMax ? 0 : selected + 1 });
+                    }}
                   >
-                    {RESOURCE_ICONS[r]} {give[r] || 0}
+                    {RESOURCE_ICONS[r]} {selected}
                     <span style={styles.owned}>/{owned}</span>
                   </button>
                 );
