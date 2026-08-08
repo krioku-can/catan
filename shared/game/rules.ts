@@ -190,10 +190,11 @@ export function rollDice(state: GameState): [number, number] {
     }
   } else {
     // 7 rolled: anyone with >7 cards must discard half. Enter discard phase.
-    state.phase = 'discard';
     state.discardQueue = state.players
       .filter(p => totalResourceCount(p) > 7)
       .map(p => p.color);
+    // If nobody needs to discard, skip straight to the robber/trade phase.
+    state.phase = state.discardQueue.length > 0 ? 'discard' : 'trade';
   }
 
   return [d1, d2];
