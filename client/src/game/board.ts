@@ -30,19 +30,20 @@ const RESOURCE_DISTRIBUTION: HexType[] = [
 // Number token distribution (in order of placement)
 const NUMBER_DISTRIBUTION = [5, 2, 6, 3, 8, 10, 9, 12, 11, 4, 8, 10, 9, 4, 5, 6, 3, 11];
 
-// Port layout (edge of board, specific hex + direction)
-// Pointy-top grid — 9 ports on verified coastal edges (water neighbor), evenly
-// distributed around the board: 4 generic 3:1 + 5 specific 2:1 (one per resource).
+// Official base game: 9 harbors around the coast, separated so no two share a
+// vertex (one empty coastal stretch between harbors). 4× generic 3:1 +
+// 5× resource-specific 2:1. Positions are fixed frame slots; types match a
+// standard distribution.
 const PORT_LAYOUT: { q: number; r: number; dir: number; type: Port['type'] }[] = [
-  { q: 2, r: 0, dir: 1, type: '3:1' },
+  { q: -2, r: 0, dir: 4, type: '3:1' },
+  { q: 0, r: -2, dir: 2, type: '2:1:grain' },
+  { q: 1, r: -2, dir: 1, type: '3:1' },
+  { q: 2, r: -2, dir: 1, type: '2:1:ore' },
+  { q: 2, r: 0, dir: 5, type: '2:1:brick' },
+  { q: 1, r: 1, dir: 0, type: '3:1' },
   { q: 0, r: 2, dir: 4, type: '2:1:lumber' },
   { q: -2, r: 2, dir: 5, type: '3:1' },
-  { q: -2, r: 2, dir: 3, type: '2:1:wool' },
-  { q: -2, r: 0, dir: 3, type: '3:1' },
-  { q: 0, r: -2, dir: 3, type: '2:1:grain' },
-  { q: 0, r: -2, dir: 1, type: '3:1' },
-  { q: 2, r: -2, dir: 2, type: '2:1:ore' },
-  { q: 2, r: 0, dir: 5, type: '2:1:brick' },
+  { q: -2, r: 1, dir: 4, type: '2:1:wool' },
 ];
 
 export function getNeighbors(q: number, r: number): { q: number; r: number }[] {
