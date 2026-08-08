@@ -74,17 +74,49 @@ function drawWoodBackground(ctx: CanvasRenderingContext2D, W: number, H: number)
 }
 
 function drawWaterHex(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number) {
-  const pts = hexCorners(cx, cy, size);
+  const pts = hexCorners(cx, cy, size * 1.02);
   fillHexPath(ctx, pts);
   const g = ctx.createRadialGradient(cx - size * 0.2, cy - size * 0.2, size * 0.1, cx, cy, size);
-  g.addColorStop(0, '#5eb3e8');
-  g.addColorStop(0.5, '#3a9ad9');
-  g.addColorStop(1, '#2b7fb8');
+  g.addColorStop(0, '#4aa9e0');
+  g.addColorStop(0.55, '#2f8ecf');
+  g.addColorStop(1, '#1f6fad');
   ctx.fillStyle = g;
   ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-  ctx.lineWidth = 1.5;
+}
+
+/** Continuous sea frame under the island (official board look). */
+function drawSeaFrame(
+  ctx: CanvasRenderingContext2D,
+  _board: { q: number; r: number }[],
+  size: number,
+  W: number,
+  H: number,
+) {
+  // Soft blue disc behind everything coastal
+  const cx = W / 2;
+  const cy = H / 2;
+  // Rough radius covering outer ring + water
+  const R = size * 5.2;
+  const g = ctx.createRadialGradient(cx, cy, size * 2.2, cx, cy, R);
+  g.addColorStop(0, 'rgba(47, 142, 207, 0)');
+  g.addColorStop(0.35, '#3a9ad9');
+  g.addColorStop(0.75, '#2b7fb8');
+  g.addColorStop(1, '#1a5f96');
+  ctx.beginPath();
+  ctx.arc(cx, cy, R, 0, Math.PI * 2);
+  ctx.fillStyle = g;
+  ctx.fill();
+
+  // Sandy coast ring (like the physical board beach)
+  ctx.save();
+  ctx.strokeStyle = 'rgba(232, 210, 160, 0.55)';
+  ctx.lineWidth = size * 0.22;
+  ctx.beginPath();
+  // Approximate coast as circle through outer hex centers
+  const coastR = size * 3.55;
+  ctx.arc(cx, cy, coastR, 0, Math.PI * 2);
   ctx.stroke();
+  ctx.restore();
 }
 
 function drawHexWithImage(
@@ -268,20 +300,131 @@ function drawRoad(
   ctx.restore();
 }
 
-function drawPortBadge(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number, label: string) {
-  const r = size * 0.22;
+/**
+ * Official-style harbor (matches physical Catan sea frame):
+ * - Short wooden pier sitting in the water
+ * - Pier touches the coastal edge (the two harbor corners)
+ * - Plaque shows "?" for 3:1 or a resource code for 2:1, plus the ratio
+ * Badge is ALWAYS on the water side of the edge.
+ */
+function drawOfficialHarbor(
+  ctx: CanvasRenderingContext2D,
+  ax: number, ay: number,
+  bx: number, by: number,
+  waterX: number, waterY: number,
+  size: number,
+  portType: string,
+) {
+  const edgeMx = (ax + bx) / 2;
+  const edgeMy = (ay + by) / 2;
+
+  // Unit vector from coastal edge midpoint out into water
+  let ox = waterX - edgeMx;
+  let oy = waterY - edgeMy;
+  const olen = Math.hypot(ox, oy) || 1;
+  ox /= olen;
+  oy /= olen;
+
+  // Harbor plaque center: just offshore (like the physical wooden dock tile)
+  const pierLen = size * 0.55;
+  const px = edgeMx + ox * pierLen;
+  const py = edgeMy + oy * pierLen;
+
+  // Edge-direction unit vector (along the coast)
+  let tx = bx - ax;
+  let ty = by - ay;
+  const tlen = Math.hypot(tx, ty) || 1;
+  tx /= tlen;
+  ty /= tlen;
+
+  ctx.save();
+
+  // --- Wooden pier legs from each harbor corner to the plaque ---
+  // (Official pieces have two short beams forming a pier)
+  ctx.strokeStyle = '#c4a574';
+  ctx.lineWidth = Math.max(3.5, size * 0.08);
+  ctx.lineCap = 'round';
+  ctx.shadowColor = 'rgba(0,0,0,0.25)';
+  ctx.shadowBlur = 2;
   ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fillStyle = '#f5f0e1';
-  ctx.fill();
-  ctx.strokeStyle = '#5d4e37';
-  ctx.lineWidth = 2;
+  ctx.moveTo(ax, ay);
+  ctx.lineTo(px - tx * size * 0.12, py - ty * size * 0.12);
+  ctx.moveTo(bx, by);
+  ctx.lineTo(px + tx * size * 0.12, py + ty * size * 0.12);
   ctx.stroke();
-  ctx.fillStyle = '#2c2416';
-  ctx.font = `bold ${Math.max(10, size * 0.13)}px Arial`;
+  ctx.shadowBlur = 0;
+
+  // --- Wooden plaque (rounded rect), like the real harbor tile ---
+  const pw = size * 0.52;
+  const ph = size * 0.42;
+  const rot = Math.atan2(oy, ox) + Math.PI / 2; // align plaque with coast
+
+  ctx.translate(px, py);
+  ctx.rotate(rot);
+
+  // Plaque body
+  roundRect(ctx, -pw / 2, -ph / 2, pw, ph, size * 0.06);
+  const wood = ctx.createLinearGradient(0, -ph / 2, 0, ph / 2);
+  wood.addColorStop(0, '#e8d5b0');
+  wood.addColorStop(0.5, '#d4bc8e');
+  wood.addColorStop(1, '#c4a574');
+  ctx.fillStyle = wood;
+  ctx.fill();
+  ctx.strokeStyle = '#8b6914';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Resource / ? icon
+  const isGeneric = portType === '3:1';
+  let icon = '?';
+  let ratio = '3:1';
+  if (!isGeneric) {
+    const res = portType.split(':')[2];
+    const letters: Record<string, string> = {
+      brick: 'Br', lumber: 'Lu', wool: 'Wo', grain: 'Gr', ore: 'Or',
+    };
+    icon = letters[res] || '?';
+    ratio = '2:1';
+  }
+
+  ctx.fillStyle = '#3a2a12';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(label, cx, cy);
+  // Top: ratio
+  ctx.font = `bold ${Math.max(9, size * 0.12)}px Arial`;
+  ctx.fillText(ratio, 0, -ph * 0.18);
+  // Bottom: ? or resource code
+  ctx.font = `bold ${Math.max(11, size * 0.15)}px Arial`;
+  ctx.fillText(isGeneric ? '?' : icon, 0, ph * 0.2);
+
+  ctx.restore();
+
+  // Small coastal markers on the two unlock corners (subtle)
+  ctx.save();
+  for (const [x, y] of [[ax, ay], [bx, by]] as const) {
+    ctx.beginPath();
+    ctx.arc(x, y, Math.max(2.5, size * 0.055), 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(232, 213, 176, 0.85)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(139, 105, 20, 0.7)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function roundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number, r: number,
+) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
 }
 
 // Pointy-top neighbor across edge `dir` (matches PORT_LAYOUT / getPortIntersections).
@@ -392,6 +535,7 @@ export default function Board({
     posCache.current = positions;
 
     drawWoodBackground(ctx, W, H);
+    drawSeaFrame(ctx, gameState.board, hexSize, W, H);
 
     const landKeys = new Set(gameState.board.map(t => `${t.q},${t.r}`));
     const waterKeys = new Set<string>();
@@ -417,8 +561,7 @@ export default function Board({
       );
     });
 
-    // Draw ports AFTER land hexes so badges sit in water, never under/on number tokens.
-    // Placement is geometric: badge is always on the WATER side of the harbor edge.
+    // Official-style harbors on the sea frame (see physical Catan board).
     if (gameState.ports?.length) {
       const boardCx = W / 2;
       const boardCy = H / 2;
@@ -432,53 +575,14 @@ export default function Board({
         const ay = pa.y + boardCy;
         const bx = pb.x + boardCx;
         const by = pb.y + boardCy;
-        const edgeMx = (ax + bx) / 2;
-        const edgeMy = (ay + by) / 2;
 
-        // Water hex center across this coastal edge — authoritative "outward" direction.
+        // Water hex center across this coastal edge — plaque sits seaward of the edge.
         const [dq, dr] = EDGE_NEIGHBOR[port.direction] || [0, 0];
         const water = hexToPixel(port.q + dq, port.r + dr, hexSize);
         const wx = water.x + boardCx;
         const wy = water.y + boardCy;
 
-        // Badge sits in the water, between the coastal edge and the water hex center.
-        const badgeX = edgeMx * 0.35 + wx * 0.65;
-        const badgeY = edgeMy * 0.35 + wy * 0.65;
-
-        let label = '3:1';
-        if (port.type.startsWith('2:1')) {
-          const res = port.type.split(':')[2];
-          const letters: Record<string, string> = {
-            brick: 'Br', lumber: 'Lu', wool: 'Wo', grain: 'Gr', ore: 'Or',
-          };
-          label = `2:${letters[res] || '?'}`;
-        }
-
-        ctx.save();
-        // Thin pier legs: ONLY edge corners → badge (stay in the water wedge)
-        ctx.strokeStyle = 'rgba(245, 240, 225, 0.9)';
-        ctx.lineWidth = Math.max(2.5, hexSize * 0.055);
-        ctx.lineCap = 'round';
-        ctx.beginPath();
-        ctx.moveTo(ax, ay);
-        ctx.lineTo(badgeX, badgeY);
-        ctx.moveTo(bx, by);
-        ctx.lineTo(badgeX, badgeY);
-        ctx.stroke();
-
-        // Mark the two corners that unlock this harbor (small, on the coast)
-        for (const [x, y] of [[ax, ay], [bx, by]] as const) {
-          ctx.beginPath();
-          ctx.arc(x, y, Math.max(3, hexSize * 0.07), 0, Math.PI * 2);
-          ctx.fillStyle = '#f5f0e1';
-          ctx.fill();
-          ctx.strokeStyle = '#5d4e37';
-          ctx.lineWidth = 1.25;
-          ctx.stroke();
-        }
-        ctx.restore();
-
-        drawPortBadge(ctx, badgeX, badgeY, hexSize, label);
+        drawOfficialHarbor(ctx, ax, ay, bx, by, wx, wy, hexSize, port.type);
       });
     }
 
