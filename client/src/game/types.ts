@@ -57,9 +57,13 @@ export interface Player {
   citiesRemaining: number;
   victoryPoints: number;
   isAI: boolean;
+  /** Number of dev cards played this turn (enforces 1-per-turn rule). */
+  devCardsPlayedThisTurn: number;
+  /** True if the player bought a dev card this turn (can't play one they just bought). */
+  boughtDevCardThisTurn: boolean;
 }
 
-export type TurnPhase = 'roll' | 'trade' | 'build' | 'setup_settlement' | 'setup_road' | 'turn_order';
+export type TurnPhase = 'roll' | 'trade' | 'build' | 'discard' | 'setup_settlement' | 'setup_road' | 'turn_order';
 
 export interface TradeOffer {
   from: PlayerColor;
@@ -87,6 +91,12 @@ export interface GameState {
   winner?: PlayerColor;
   setupPhase: boolean;
   setupRound: number; // 0 = first settlement, 1 = first road, etc.
+  /** Players who still need to discard half their hand after a 7. */
+  discardQueue: PlayerColor[];
+  /** Pending dev-card action awaiting placement (road_building). */
+  pendingDevAction: 'road_building' | null;
+  /** Free roads remaining from a Road Building card (0-2). */
+  pendingDevRoads: number;
 }
 
 export interface GameConfig {

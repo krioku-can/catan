@@ -36,6 +36,8 @@ export function createInitialState(config: GameConfig): GameState {
       citiesRemaining: INITIAL_PIECES.cities,
       victoryPoints: 0,
       isAI: config.aiPlayers.includes(i),
+      devCardsPlayedThisTurn: 0,
+      boughtDevCardThisTurn: false,
     });
   }
 
@@ -59,6 +61,9 @@ export function createInitialState(config: GameConfig): GameState {
     tradeOffers: [],
     setupPhase: true,
     setupRound: 0,
+    discardQueue: [],
+    pendingDevAction: null,
+    pendingDevRoads: 0,
   };
 }
 
@@ -172,21 +177,57 @@ export function rollDice(state: GameState): [number, number] {
   const d1 = Math.floor(Math.random() * 6) + 1;
   const d2 = Math.floor(Math.random() * 6) + 1;
   state.dice = [d1, d2];
-  state.phase = 'trade';
 
   const total = d1 + d2;
   
   // Distribute resources
   if (total !== 7) {
+    state.phase = 'trade';
     const production = getResourceProduction(total, state.board, state.intersections);
     for (const [color, resources] of Object.entries(production)) {
       const player = getPlayerByColor(state, color as PlayerColor);
       addResources(player, resources);
     }
+  } else {
+    // 7 rolled: anyone with >7 cards must discard half. Enter discard phase.
+    state.phase = 'discard';
+    state.discardQueue = state.players
+      .filter(p => totalResourceCount(p) > 7)
+      .map(p => p.color);
   }
-  // If 7, robber activates (handled by UI)
 
   return [d1, d2];
+}
+
+function totalResourceCount(p: Player): number {
+  return RESOURCES.reduce((sum, r) => sum + (p.resources[r] || 0), 0);
+}
+
+// Discard a specific set of resources (used after a 7). Returns error string or null.
+export function discardResources(state: GameState, color: PlayerColor, toDiscard: Partial<Record<ResourceType, number>>): string | null {
+  const player = getPlayerByColor(state, color);
+  if (!state.discardQueue.includes(color)) return 'You do not need to discard';
+
+  // Validate the discard is exactly half (rounded down) of the hand.
+  const total = totalResourceCount(player);
+  const mustDiscard = Math.floor(total / 2);
+  const discarding = RESOURCES.reduce((sum, r) => sum + (toDiscard[r] || 0), 0);
+  if (discarding !== mustDiscard) return `Must discard exactly ${mustDiscard} cards`;
+
+  // Validate the player actually has what they're discarding.
+  for (const r of RESOURCES) {
+    if ((toDiscard[r] || 0) > (player.resources[r] || 0)) return 'You do not have those cards';
+  }
+
+  deductResources(player, toDiscard);
+  state.discardQueue = state.discardQueue.filter(c => c !== color);
+
+  // Once everyone has discarded, move to the robber phase (trade phase, robber UI).
+  if (state.discardQueue.length === 0) {
+    state.phase = 'trade';
+  }
+
+  return null;
 }
 
 // Move robber
@@ -197,6 +238,8 @@ export function moveRobber(state: GameState, targetHexQ: number, targetHexR: num
   
   if (!newTile) return 'Invalid hex';
   if (newTile.type === 'water') return 'Cannot place robber on water';
+  // Official rule: the robber must be moved to a different hex.
+  if (newTile.q === rq && newTile.r === rr) return 'Robber must move to a different hex';
   
   if (oldTile) oldTile.hasRobber = false;
   newTile.hasRobber = true;
@@ -234,7 +277,16 @@ export function placeRoad(state: GameState, edgeKey: string): string | null {
 
   edge.road = player.color;
   player.roadsRemaining--;
-  deductResources(player, BUILDING_COSTS.road);
+  // Road Building card roads are free; otherwise deduct the normal cost.
+  if (state.pendingDevAction === 'road_building') {
+    state.pendingDevRoads--;
+    if (state.pendingDevRoads <= 0) {
+      state.pendingDevAction = null;
+      state.pendingDevRoads = 0;
+    }
+  } else {
+    deductResources(player, BUILDING_COSTS.road);
+  }
   
   // Check longest road
   updateLongestRoad(state);
@@ -312,6 +364,8 @@ export function buyDevCard(state: GameState): DevelopmentCard | null {
   };
 
   player.devCards.push(card);
+  // Official rule: a dev card bought this turn cannot be played until the next turn.
+  player.boughtDevCardThisTurn = true;
   
   // Victory point cards are auto-played
   if (card.type === 'victory_point') {
@@ -325,11 +379,16 @@ export function buyDevCard(state: GameState): DevelopmentCard | null {
 // Play a knight card
 export function playKnight(state: GameState): string | null {
   const player = getCurrentPlayer(state);
+  // Official rule: only one dev card may be played per turn.
+  if (player.devCardsPlayedThisTurn >= 1) return 'Only one dev card per turn';
+  // Official rule: a card bought this turn cannot be played until the next turn.
+  if (player.boughtDevCardThisTurn) return 'Cannot play a card you just bought';
   const knight = player.devCards.find(c => c.type === 'knight' && !c.played);
   if (!knight) return 'No unplayed knight card';
 
   knight.played = true;
   player.playedKnights++;
+  player.devCardsPlayedThisTurn++;
 
   // Check largest army
   if (player.playedKnights >= 3 && player.playedKnights > (state.largestArmy.size || 0)) {
@@ -345,8 +404,69 @@ export function playKnight(state: GameState): string | null {
   return null; // success, robber move follows
 }
 
+// Play a Road Building card: place 2 free roads. Returns error or null.
+export function playRoadBuilding(state: GameState): string | null {
+  const player = getCurrentPlayer(state);
+  if (player.devCardsPlayedThisTurn >= 1) return 'Only one dev card per turn';
+  if (player.boughtDevCardThisTurn) return 'Cannot play a card you just bought';
+  const card = player.devCards.find(c => c.type === 'road_building' && !c.played);
+  if (!card) return 'No unplayed Road Building card';
+  if (player.roadsRemaining <= 0) return 'No roads remaining';
+
+  card.played = true;
+  player.devCardsPlayedThisTurn++;
+  // Enter a special build state where the next 2 road placements are free.
+  state.pendingDevAction = 'road_building';
+  state.pendingDevRoads = 2;
+  return null;
+}
+
+// Play a Year of Plenty card: take any 2 resources from the bank.
+export function playYearOfPlenty(state: GameState, res1: ResourceType, res2: ResourceType): string | null {
+  const player = getCurrentPlayer(state);
+  if (player.devCardsPlayedThisTurn >= 1) return 'Only one dev card per turn';
+  if (player.boughtDevCardThisTurn) return 'Cannot play a card you just bought';
+  const card = player.devCards.find(c => c.type === 'year_of_plenty' && !c.played);
+  if (!card) return 'No unplayed Year of Plenty card';
+
+  card.played = true;
+  player.devCardsPlayedThisTurn++;
+  addResources(player, { [res1]: 1, [res2]: 1 });
+  return null;
+}
+
+// Play a Monopoly card: take all of one resource from all other players.
+export function playMonopoly(state: GameState, resource: ResourceType): string | null {
+  const player = getCurrentPlayer(state);
+  if (player.devCardsPlayedThisTurn >= 1) return 'Only one dev card per turn';
+  if (player.boughtDevCardThisTurn) return 'Cannot play a card you just bought';
+  const card = player.devCards.find(c => c.type === 'monopoly' && !c.played);
+  if (!card) return 'No unplayed Monopoly card';
+
+  card.played = true;
+  player.devCardsPlayedThisTurn++;
+  let total = 0;
+  for (const other of state.players) {
+    if (other.color === player.color) continue;
+    const n = other.resources[resource] || 0;
+    if (n > 0) {
+      other.resources[resource] = 0;
+      total += n;
+    }
+  }
+  player.resources[resource] = (player.resources[resource] || 0) + total;
+  return null;
+}
+
 // End turn
 export function endTurn(state: GameState): void {
+  // Reset per-turn dev card flags for the player who just finished.
+  const ending = getCurrentPlayer(state);
+  ending.devCardsPlayedThisTurn = 0;
+  ending.boughtDevCardThisTurn = false;
+  state.pendingDevAction = null;
+  state.pendingDevRoads = 0;
+
   state.currentTurn = (state.currentTurn + 1) % state.players.length;
   state.phase = 'roll';
   state.dice = null;
@@ -430,14 +550,23 @@ function calculateLongestRoad(player: PlayerColor, edges: Record<string, Edge>):
 function updateLongestRoad(state: GameState): void {
   let maxLength = 0;
   let maxColor: PlayerColor | undefined;
+  let tie = false;
   
   for (const player of state.players) {
     const length = calculateLongestRoad(player.color, state.edges);
-    if (length >= 5 && length > maxLength) {
-      maxLength = length;
-      maxColor = player.color;
+    if (length >= 5) {
+      if (length > maxLength) {
+        maxLength = length;
+        maxColor = player.color;
+        tie = false;
+      } else if (length === maxLength) {
+        // Official rule: a tie for longest road means nobody holds it.
+        tie = true;
+      }
     }
   }
+  // If there's a tie at the max length, nobody gets the bonus.
+  if (tie) maxColor = undefined;
 
   // Remove old longest road bonus
   if (state.longestRoad.color && state.longestRoad.color !== maxColor) {
@@ -532,6 +661,28 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
   // Normal play
   if (state.phase === 'roll') {
     return { action: 'roll_dice' };
+  }
+
+  // Discard phase after a 7: AI discards half its hand automatically.
+  if (state.phase === 'discard') {
+    if (state.discardQueue.includes(player.color)) {
+      const total = RESOURCES.reduce((s, r) => s + (player.resources[r] || 0), 0);
+      const mustDiscard = Math.floor(total / 2);
+      const toDiscard: Partial<Record<ResourceType, number>> = {};
+      let remaining = mustDiscard;
+      // Discard from the most abundant resources first.
+      const sorted = [...RESOURCES].sort((a, b) => (player.resources[b] || 0) - (player.resources[a] || 0));
+      for (const r of sorted) {
+        if (remaining <= 0) break;
+        const take = Math.min(player.resources[r] || 0, remaining);
+        if (take > 0) { toDiscard[r] = take; remaining -= take; }
+      }
+      discardResources(state, player.color, toDiscard);
+      return { action: 'discard', data: { discard: toDiscard } };
+    }
+    // If the AI doesn't need to discard but the phase is discard, it's waiting
+    // on other players — do nothing until the queue clears.
+    return null;
   }
 
   if (state.phase === 'trade') {

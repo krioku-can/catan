@@ -1,5 +1,6 @@
 import type { GameState, ResourceType, PlayerColor } from '../game/types';
 import { getCurrentPlayer } from '../game/rules';
+import { getPortRate } from '../game/board';
 import { useState } from 'react';
 
 interface TradePanelProps {
@@ -37,10 +38,27 @@ export default function TradePanel({ gameState, isMyTurn, onTrade }: TradePanelP
         setGive({});
         setWant({});
       }
+    } else {
+      // Domestic trade: pass through to the parent (server handles it).
+      const giveResource = Object.entries(give)[0];
+      const wantResource = Object.entries(want)[0];
+      if (giveResource && wantResource) {
+        onTrade({
+          give: { [giveResource[0] as ResourceType]: giveResource[1] || 0 },
+          want: { [wantResource[0] as ResourceType]: wantResource[1] || 0 },
+          target,
+        });
+        setGive({});
+        setWant({});
+      }
     }
   };
 
   if (!isMyTurn) return null;
+
+  // Compute the player's best bank rate for the resource they're giving.
+  const giveRes = Object.keys(give)[0] as ResourceType | undefined;
+  const rate = giveRes ? getPortRate(player.color, giveRes, gameState.ports, gameState.intersections) : 4;
 
   return (
     <div style={styles.container}>
@@ -87,7 +105,7 @@ export default function TradePanel({ gameState, isMyTurn, onTrade }: TradePanelP
               value={target}
               onChange={e => setTarget(e.target.value as PlayerColor | 'bank')}
             >
-              <option value="bank">Bank (4:1)</option>
+              <option value="bank">Bank ({rate}:1)</option>
               {gameState.players
                 .filter(p => p.color !== player.color)
                 .map(p => (

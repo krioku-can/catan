@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { GameState, GameConfig, PlayerColor, ResourceType } from '../game/types';
-import { createInitialState, getCurrentPlayer, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight } from '../game/rules';
-import { getHexCorners } from '../game/board';
+import { createInitialState, getCurrentPlayer, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly } from '../game/rules';
+import { getHexCorners, getPortRate } from '../game/board';
 import Board from './Board';
 import PlayerHand from './PlayerHand';
 import DiceRoller from './DiceRoller';
@@ -10,6 +10,8 @@ import HandBar from './HandBar';
 import TradePanel from './TradePanel';
 import BuildMenu from './BuildMenu';
 import GameLog from './GameLog';
+import DiscardModal from './DiscardModal';
+import DevCardPanel from './DevCardPanel';
 import { recordGame } from '../stats';
 import { setStored, getStored } from '../storage';
 
@@ -111,6 +113,10 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
         }
         case 'skip_trade':
           gameState.phase = 'build';
+          break;
+        case 'discard':
+          // aiTurn already applied the discard; just log it
+          addLog(`${current.name} discarded cards after the 7`);
           break;
         case 'place_settlement':
           if (gameState.setupPhase) placeSetupSettlement(gameState, action.data.key);
@@ -278,6 +284,23 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
       
       if (total === 7) {
         addLog('7 rolled! Robber time!');
+        // Auto-discard for AI players who have >7 cards.
+        for (const ai of gameState.players) {
+          if (!ai.isAI) continue;
+          if (!gameState.discardQueue.includes(ai.color)) continue;
+          const aiTotal = ['brick', 'lumber', 'wool', 'grain', 'ore'].reduce((s, r) => s + (ai.resources[r as ResourceType] || 0), 0);
+          const mustDiscard = Math.floor(aiTotal / 2);
+          const toDiscard: Partial<Record<ResourceType, number>> = {};
+          let remaining = mustDiscard;
+          const sorted = (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
+            .sort((a, b) => (ai.resources[b] || 0) - (ai.resources[a] || 0));
+          for (const r of sorted) {
+            if (remaining <= 0) break;
+            const take = Math.min(ai.resources[r] || 0, remaining);
+            if (take > 0) { toDiscard[r] = take; remaining -= take; }
+          }
+          discardResources(gameState, ai.color, toDiscard);
+        }
         setRobberMode(true);
         const [rq, rr] = gameState.robberHex.split(',').map(Number);
         const targets: PlayerColor[] = [];
@@ -326,6 +349,45 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     setSelectedAction(null);
     setGameState({ ...gameState });
   }, [gameState]);
+
+  const handleDiscard = useCallback((discard: Partial<Record<ResourceType, number>>) => {
+    if (!gameState) return;
+    const me = gameState.players.find(p => !p.isAI);
+    if (!me) return;
+    const err = discardResources(gameState, me.color, discard);
+    if (err === null) {
+      addLog('You discarded cards after the 7');
+      setGameState({ ...gameState });
+    }
+  }, [gameState, addLog]);
+
+  const handlePlayRoadBuilding = useCallback(() => {
+    if (!gameState) return;
+    const err = playRoadBuilding(gameState);
+    if (err === null) {
+      addLog(`${getCurrentPlayer(gameState).name} played Road Building!`);
+      setSelectedAction('road');
+      setGameState({ ...gameState });
+    }
+  }, [gameState, addLog]);
+
+  const handlePlayYearOfPlenty = useCallback((r1: ResourceType, r2: ResourceType) => {
+    if (!gameState) return;
+    const err = playYearOfPlenty(gameState, r1, r2);
+    if (err === null) {
+      addLog(`${getCurrentPlayer(gameState).name} played Year of Plenty!`);
+      setGameState({ ...gameState });
+    }
+  }, [gameState, addLog]);
+
+  const handlePlayMonopoly = useCallback((r: ResourceType) => {
+    if (!gameState) return;
+    const err = playMonopoly(gameState, r);
+    if (err === null) {
+      addLog(`${getCurrentPlayer(gameState).name} played Monopoly on ${r}!`);
+      setGameState({ ...gameState });
+    }
+  }, [gameState, addLog]);
 
   const handleBuyDevCard = useCallback(() => {
     if (!gameState) return;
@@ -478,6 +540,18 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
 
       <HandBar player={me} />
 
+      {/* Discard modal after a 7 */}
+      {gameState.phase === 'discard' && me && gameState.discardQueue.includes(me.color) && (
+        <DiscardModal
+          player={me}
+          mustDiscard={Math.floor(
+            (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
+              .reduce((s, r) => s + (me.resources[r] || 0), 0) / 2
+          )}
+          onDiscard={handleDiscard}
+        />
+      )}
+
       <div style={styles.tabBar}>
         <button
           type="button"
@@ -535,14 +609,25 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
                         if (offer.target === 'bank') {
                           const gRes = Object.entries(offer.give)[0];
                           const wRes = Object.entries(offer.want)[0];
-                          if (gRes && wRes && (player.resources[gRes[0] as ResourceType] || 0) >= (gRes[1] || 0)) {
-                            player.resources[gRes[0] as ResourceType] -= gRes[1] || 0;
-                            player.resources[wRes[0] as ResourceType] = (player.resources[wRes[0] as ResourceType] || 0) + (wRes[1] || 0);
-                            addLog(`${player.name} traded 4 ${gRes[0]} → ${wRes[1]} ${wRes[0]}`);
+                          if (gRes && wRes) {
+                            const rate = getPortRate(player.color, gRes[0] as ResourceType, gameState.ports, gameState.intersections);
+                            const giveAmt = gRes[1] || 0;
+                            if (giveAmt >= rate && giveAmt % rate === 0 && (player.resources[gRes[0] as ResourceType] || 0) >= giveAmt) {
+                              const received = Math.floor(giveAmt / rate) * (wRes[1] || 0);
+                              player.resources[gRes[0] as ResourceType] -= giveAmt;
+                              player.resources[wRes[0] as ResourceType] = (player.resources[wRes[0] as ResourceType] || 0) + received;
+                              addLog(`${player.name} traded ${giveAmt} ${gRes[0]} → ${received} ${wRes[0]}`);
+                            }
                           }
                         }
                         setGameState({ ...gameState });
                       }}
+                    />
+                    <DevCardPanel
+                      player={player}
+                      onPlayRoadBuilding={handlePlayRoadBuilding}
+                      onPlayYearOfPlenty={handlePlayYearOfPlenty}
+                      onPlayMonopoly={handlePlayMonopoly}
                     />
                     {gameState.phase === 'trade' && isMyTurn && (
                       <button style={styles.doneTradingBtn} onClick={handleSkipTrade}>

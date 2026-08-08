@@ -4,8 +4,8 @@ import cors from 'cors';
 import { Server } from 'socket.io';
 import { v4 as uuidv4 } from 'uuid';
 import type { GameState, GameConfig, PlayerColor, ResourceType } from './game/types.js';
-import { createInitialState, getCurrentPlayer, rollDice, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight } from './game/rules.js';
-import { getHexCorners } from './game/board.js';
+import { createInitialState, getCurrentPlayer, getPlayerByColor, rollDice, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly } from './game/rules.js';
+import { getHexCorners, getPortRate } from './game/board.js';
 
 const PORT = parseInt(process.env.PORT || '3001');
 const CORS_ORIGIN = process.env.CORS_ORIGIN || 'https://catan-lac.vercel.app';
@@ -261,11 +261,28 @@ io.on('connection', (socket) => {
       case 'roll_dice': {
         const [d1, d2] = rollDice(gs);
         result = { dice: [d1, d2], total: d1 + d2 };
-        // rollDice() sets phase to 'trade'. Per official rules the turn is
-        // roll → trade → build, so the roller stays in the trade phase and
-        // advances to build via the 'skip_trade' action ("Done Trading").
-        // The AI reaches build via its internal skip_trade.
+        // rollDice() sets phase to 'trade' (or 'discard' on a 7). Per official
+        // rules the turn is roll → trade → build, so the roller stays in the
+        // trade phase and advances to build via the 'skip_trade' action.
         if (d1 + d2 === 7) {
+          // Auto-discard for AI players who have >7 cards.
+          for (const ai of gs.players) {
+            if (!ai.isAI) continue;
+            if (!gs.discardQueue.includes(ai.color)) continue;
+            const total = (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
+              .reduce((s, r) => s + (ai.resources[r] || 0), 0);
+            const mustDiscard = Math.floor(total / 2);
+            const toDiscard: Partial<Record<ResourceType, number>> = {};
+            let remaining = mustDiscard;
+            const sorted = (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
+              .sort((a, b) => (ai.resources[b] || 0) - (ai.resources[a] || 0));
+            for (const r of sorted) {
+              if (remaining <= 0) break;
+              const take = Math.min(ai.resources[r] || 0, remaining);
+              if (take > 0) { toDiscard[r] = take; remaining -= take; }
+            }
+            discardResources(gs, ai.color, toDiscard);
+          }
           // Find steal targets
           const [rq, rr] = gs.robberHex.split(',').map(Number);
           const targets: PlayerColor[] = [];
@@ -352,11 +369,93 @@ io.on('connection', (socket) => {
           const [wRes, wAmt] = wantEntries[0];
           const giveAmount = Number(gAmt) || 0;
           const wantAmount = Number(wAmt) || 0;
-          if ((p.resources[gRes as ResourceType] || 0) >= giveAmount) {
-            p.resources[gRes as ResourceType] -= giveAmount;
-            p.resources[wRes as ResourceType] = (p.resources[wRes as ResourceType] || 0) + wantAmount;
+          // Official rule: the exchange rate depends on the player's ports.
+          // 4:1 without a port, 3:1 with a generic port, 2:1 with a matching
+          // specific port. The client sends the give amount it wants to trade;
+          // we validate it's a valid multiple of the player's best rate.
+          const rate = getPortRate(p.color, gRes as ResourceType, gs.ports, gs.intersections);
+          if (giveAmount >= rate && giveAmount % rate === 0) {
+            const received = Math.floor(giveAmount / rate) * wantAmount;
+            if ((p.resources[gRes as ResourceType] || 0) >= giveAmount) {
+              p.resources[gRes as ResourceType] -= giveAmount;
+              p.resources[wRes as ResourceType] = (p.resources[wRes as ResourceType] || 0) + received;
+            }
           }
         }
+        result = { success: true };
+        break;
+      }
+      case 'discard': {
+        const err = discardResources(gs, conn.color, data.discard);
+        if (err) return;
+        result = { success: true };
+        break;
+      }
+      case 'play_road_building': {
+        const err = playRoadBuilding(gs);
+        if (err) return;
+        result = { success: true };
+        break;
+      }
+      case 'play_year_of_plenty': {
+        const err = playYearOfPlenty(gs, data.res1, data.res2);
+        if (err) return;
+        result = { success: true };
+        break;
+      }
+      case 'play_monopoly': {
+        const err = playMonopoly(gs, data.resource);
+        if (err) return;
+        result = { success: true };
+        break;
+      }
+      case 'propose_trade': {
+        // Domestic trade: the active player proposes a trade to another player.
+        // We store it as a pending offer; the target accepts/rejects via
+        // accept_trade. Only the active player can propose.
+        const from = conn.color;
+        const to = data.to as PlayerColor;
+        if (from === to) return;
+        const target = gs.players.find(p => p.color === to);
+        if (!target) return;
+        // Validate the proposer has the resources they're offering.
+        for (const [r, n] of Object.entries(data.give || {})) {
+          const amt = Number(n) || 0;
+          if ((getCurrentPlayer(gs).resources[r as ResourceType] || 0) < amt) return;
+        }
+        gs.tradeOffers = gs.tradeOffers.filter(o => o.from !== from || o.to !== to);
+        gs.tradeOffers.push({ from, to, give: data.give, want: data.want });
+        result = { success: true, offer: { from, to, give: data.give, want: data.want } };
+        break;
+      }
+      case 'accept_trade': {
+        // The target accepts a pending trade offer from the active player.
+        const offer = gs.tradeOffers.find(o => o.to === conn.color);
+        if (!offer) return;
+        const from = getPlayerByColor(gs, offer.from);
+        const to = getPlayerByColor(gs, offer.to);
+        // Validate both sides have the resources.
+        for (const [r, n] of Object.entries(offer.give || {})) {
+          if ((from.resources[r as ResourceType] || 0) < (Number(n) || 0)) return;
+        }
+        for (const [r, n] of Object.entries(offer.want || {})) {
+          if ((to.resources[r as ResourceType] || 0) < (Number(n) || 0)) return;
+        }
+        // Execute the trade.
+        for (const [r, n] of Object.entries(offer.give || {})) {
+          from.resources[r as ResourceType] -= Number(n) || 0;
+          to.resources[r as ResourceType] = (to.resources[r as ResourceType] || 0) + (Number(n) || 0);
+        }
+        for (const [r, n] of Object.entries(offer.want || {})) {
+          to.resources[r as ResourceType] -= Number(n) || 0;
+          from.resources[r as ResourceType] = (from.resources[r as ResourceType] || 0) + (Number(n) || 0);
+        }
+        gs.tradeOffers = gs.tradeOffers.filter(o => o !== offer);
+        result = { success: true };
+        break;
+      }
+      case 'reject_trade': {
+        gs.tradeOffers = gs.tradeOffers.filter(o => o.to !== conn.color);
         result = { success: true };
         break;
       }
@@ -449,6 +548,11 @@ function runAITurn(room: Room) {
       emitGameToRoom(room, 'roll_turn_order', { order: gs.turnOrder });
       break;
     }
+    case 'discard': {
+      // aiTurn already applied the discard; just sync the room
+      emitGameToRoom(room, 'discard', { success: true });
+      break;
+    }
     case 'place_settlement':
     case 'place_road':
     case 'place_city':
@@ -458,15 +562,16 @@ function runAITurn(room: Room) {
       break;
     }
     case 'bank_trade': {
-      // AI returns {give: 'res', get: 'res'} (4:1 strings)
+      // AI returns {give: 'res', get: 'res'} — use the player's port rate.
       const p = getCurrentPlayer(gs);
       const give = action.data.give as ResourceType;
       const get = action.data.get as ResourceType;
-      if ((p.resources[give] || 0) >= 4) {
-        p.resources[give] -= 4;
+      const rate = getPortRate(p.color, give, gs.ports, gs.intersections);
+      if ((p.resources[give] || 0) >= rate) {
+        p.resources[give] -= rate;
         p.resources[get] = (p.resources[get] || 0) + 1;
       }
-      emitGameToRoom(room, 'bank_trade', { give: { [give]: 4 }, want: { [get]: 1 }, success: true });
+      emitGameToRoom(room, 'bank_trade', { give: { [give]: rate }, want: { [get]: 1 }, success: true });
       break;
     }
   }

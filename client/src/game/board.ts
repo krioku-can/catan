@@ -124,6 +124,39 @@ export function getHexEdges(q: number, r: number): string[] {
   return edges;
 }
 
+// The two intersection keys at the ends of a port's edge. A port sits on the
+// edge between corner `direction` and corner `(direction+1)%6` of hex (q,r).
+export function getPortIntersections(port: { q: number; r: number; direction: number }): string[] {
+  const corners = getHexCorners(port.q, port.r);
+  const a = corners[port.direction];
+  const b = corners[(port.direction + 1) % 6];
+  return [a, b];
+}
+
+// Return the best port rate a player has access to for a given resource.
+// Returns 4 (no port), 3 (generic 3:1), or 2 (specific 2:1 for that resource).
+export function getPortRate(
+  color: string,
+  resource: ResourceType,
+  ports: Port[],
+  intersections: Record<string, Intersection>,
+): number {
+  let best = 4;
+  for (const port of ports) {
+    const [a, b] = getPortIntersections(port);
+    const ia = intersections[a];
+    const ib = intersections[b];
+    const hasPort = (ia?.owner === color) || (ib?.owner === color);
+    if (!hasPort) continue;
+    if (port.type === '3:1') {
+      best = Math.min(best, 3);
+    } else if (port.type === `2:1:${resource}`) {
+      best = Math.min(best, 2);
+    }
+  }
+  return best;
+}
+
 // Shuffle array in place (Fisher-Yates)
 function shuffle<T>(arr: T[]): T[] {
   const a = [...arr];
@@ -148,12 +181,35 @@ export function generateBoard(): { tiles: HexTile[]; ports: Port[]; intersection
     hasRobber: shuffledResources[i] === 'desert',
   }));
 
-  // 3. Assign number tokens (skip desert)
+  // 3. Assign number tokens (skip desert), enforcing the official rule that
+  //    the red numbers (6 and 8) cannot be placed on adjacent hexes.
   const landTiles = tiles.filter(t => t.type !== 'desert');
   const shuffledNumbers = shuffle(NUMBER_DISTRIBUTION);
-  landTiles.forEach((tile, i) => {
-    tile.number = shuffledNumbers[i];
-  });
+  // Try up to 200 times to find a layout where no 6/8 hex is adjacent to
+  // another 6/8 hex. If we can't (extremely unlikely), fall back to the
+  // shuffled layout rather than failing.
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const layout = shuffle(shuffledNumbers);
+    let ok = true;
+    for (let i = 0; i < landTiles.length; i++) {
+      if (layout[i] !== 6 && layout[i] !== 8) continue;
+      const t = landTiles[i];
+      for (let j = 0; j < landTiles.length; j++) {
+        if (i === j) continue;
+        if (layout[j] !== 6 && layout[j] !== 8) continue;
+        const o = landTiles[j];
+        if (hexDistance(t, o) === 1) { ok = false; break; }
+      }
+      if (!ok) break;
+    }
+    if (ok) {
+      landTiles.forEach((tile, i) => { tile.number = layout[i]; });
+      break;
+    }
+    if (attempt === 199) {
+      landTiles.forEach((tile, i) => { tile.number = shuffledNumbers[i]; });
+    }
+  }
 
   // 4. Build ports
   const ports: Port[] = PORT_LAYOUT.map(p => ({

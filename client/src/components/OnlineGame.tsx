@@ -9,6 +9,9 @@ import DiceFlash from './DiceFlash';
 import HandBar from './HandBar';
 import TradePanel from './TradePanel';
 import BuildMenu from './BuildMenu';
+import DiscardModal from './DiscardModal';
+import DevCardPanel from './DevCardPanel';
+import TradeOffers from './TradeOffers';
 
 const HEX_SIZE = 58;
 
@@ -87,8 +90,34 @@ export default function OnlineGame() {
       // Online bank trade is server-authoritative: send the action, the server
       // validates + applies it, and the synced gameState re-renders the hand.
       sendAction('bank_trade', { give: offer.give, want: offer.want });
+    } else {
+      // Domestic player-to-player trade: send a trade offer to the server.
+      sendAction('propose_trade', { to: offer.target, give: offer.give, want: offer.want });
     }
-    // Player-to-player trades are not implemented in the online flow yet.
+  }, [sendAction]);
+
+  const handleDiscard = useCallback((discard: Partial<Record<ResourceType, number>>) => {
+    sendAction('discard', { discard });
+  }, [sendAction]);
+
+  const handlePlayRoadBuilding = useCallback(() => {
+    sendAction('play_road_building');
+  }, [sendAction]);
+
+  const handlePlayYearOfPlenty = useCallback((r1: ResourceType, r2: ResourceType) => {
+    sendAction('play_year_of_plenty', { res1: r1, res2: r2 });
+  }, [sendAction]);
+
+  const handlePlayMonopoly = useCallback((r: ResourceType) => {
+    sendAction('play_monopoly', { resource: r });
+  }, [sendAction]);
+
+  const handleAcceptTrade = useCallback(() => {
+    sendAction('accept_trade');
+  }, [sendAction]);
+
+  const handleRejectTrade = useCallback(() => {
+    sendAction('reject_trade');
   }, [sendAction]);
 
   const handleSendChat = useCallback(() => {
@@ -149,6 +178,28 @@ export default function OnlineGame() {
 
       {myPlayer && <HandBar player={myPlayer} />}
 
+      {/* Discard modal after a 7 */}
+      {gameState.phase === 'discard' && myPlayer && gameState.discardQueue.includes(myPlayer.color) && (
+        <DiscardModal
+          player={myPlayer}
+          mustDiscard={Math.floor(
+            (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
+              .reduce((s, r) => s + (myPlayer.resources[r] || 0), 0) / 2
+          )}
+          onDiscard={handleDiscard}
+        />
+      )}
+
+      {/* Incoming domestic trade offers */}
+      {myPlayer && (
+        <TradeOffers
+          gameState={gameState}
+          myColor={myPlayer.color}
+          onAccept={handleAcceptTrade}
+          onReject={handleRejectTrade}
+        />
+      )}
+
       {/* Bottom tab bar */}
       <div style={styles.tabBar}>
         <button
@@ -199,6 +250,12 @@ export default function OnlineGame() {
                     gameState={gameState}
                     isMyTurn={isMyTurn}
                     onTrade={handleTrade}
+                  />
+                  <DevCardPanel
+                    player={player}
+                    onPlayRoadBuilding={handlePlayRoadBuilding}
+                    onPlayYearOfPlenty={handlePlayYearOfPlenty}
+                    onPlayMonopoly={handlePlayMonopoly}
                   />
                   {gameState.phase === 'trade' && isMyTurn && (
                     <button style={styles.doneTradingBtn} onClick={handleSkipTrade}>
