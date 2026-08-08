@@ -261,12 +261,10 @@ io.on('connection', (socket) => {
       case 'roll_dice': {
         const [d1, d2] = rollDice(gs);
         result = { dice: [d1, d2], total: d1 + d2 };
-        // Advance the roller to the build phase. The AI reaches build via its
-        // internal skip_trade, but a human player has no other path — without
-        // this they'd be stuck in 'trade' and unable to build anything.
-        if (d1 + d2 !== 7 && !getCurrentPlayer(gs).isAI) {
-          gs.phase = 'build';
-        }
+        // rollDice() sets phase to 'trade'. Per official rules the turn is
+        // roll → trade → build, so the roller stays in the trade phase and
+        // advances to build via the 'skip_trade' action ("Done Trading").
+        // The AI reaches build via its internal skip_trade.
         if (d1 + d2 === 7) {
           // Find steal targets
           const [rq, rr] = gs.robberHex.split(',').map(Number);

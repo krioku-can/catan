@@ -271,13 +271,10 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
       setDiceFlash({ total, faces: [d1, d2] });
       addLog(`${getCurrentPlayer(gameState).name} rolled ${d1} + ${d2} = ${total}`);
       
-      // Advance the human from 'trade' to 'build' phase. The AI does this
-      // internally (skip_trade), but a human has no other way to reach the
-      // build phase where pieces are placed — without this they'd be stuck
-      // in 'trade' and unable to build anything.
-      if (!getCurrentPlayer(gameState).isAI) {
-        gameState.phase = 'build';
-      }
+      // rollDice() sets phase to 'trade'. Per official rules the turn is
+      // roll → trade → build, so the roller stays in the trade phase and
+      // advances to build via the "Done Trading" button (skip_trade).
+      // The AI reaches build via its internal skip_trade.
       
       if (total === 7) {
         addLog('7 rolled! Robber time!');
@@ -310,7 +307,6 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     addLog(`${player.name} ended their turn`);
     setSelectedAction(null);
     setGameState({ ...gameState });
-
     setTimeout(() => {
       if (!gameState) return;
       const current = getCurrentPlayer(gameState);
@@ -323,6 +319,13 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
       }
     }, 500);
   }, [gameState, addLog]);
+
+  const handleSkipTrade = useCallback(() => {
+    if (!gameState) return;
+    gameState.phase = 'build';
+    setSelectedAction(null);
+    setGameState({ ...gameState });
+  }, [gameState]);
 
   const handleBuyDevCard = useCallback(() => {
     if (!gameState) return;
@@ -541,6 +544,11 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
                         setGameState({ ...gameState });
                       }}
                     />
+                    {gameState.phase === 'trade' && isMyTurn && (
+                      <button style={styles.doneTradingBtn} onClick={handleSkipTrade}>
+                        ✅ Done Trading
+                      </button>
+                    )}
                   </>
                 )}
                 {gameState.setupPhase && (
@@ -817,4 +825,9 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'white', fontSize: 17, fontWeight: 'bold', cursor: 'pointer',
   },
   turnOrderHint: { fontSize: 13, color: '#8890a0', margin: 0 },
+  doneTradingBtn: {
+    padding: '12px 16px', border: 'none', borderRadius: 8,
+    background: 'linear-gradient(135deg, #2ecc71, #27ae60)',
+    color: 'white', fontSize: 14, fontWeight: 'bold', cursor: 'pointer',
+  },
 };

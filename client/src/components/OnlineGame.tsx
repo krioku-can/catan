@@ -68,6 +68,11 @@ export default function OnlineGame() {
     setSelectedAction(null);
   }, [sendAction]);
 
+  const handleSkipTrade = useCallback(() => {
+    sendAction('skip_trade');
+    setSelectedAction(null);
+  }, [sendAction]);
+
   const handleBuyDevCard = useCallback(() => {
     sendAction('buy_dev_card');
   }, [sendAction]);
@@ -195,6 +200,11 @@ export default function OnlineGame() {
                     isMyTurn={isMyTurn}
                     onTrade={handleTrade}
                   />
+                  {gameState.phase === 'trade' && isMyTurn && (
+                    <button style={styles.doneTradingBtn} onClick={handleSkipTrade}>
+                      ✅ Done Trading
+                    </button>
+                  )}
                 </>
               )}
               {gameState.setupPhase && (
@@ -428,6 +438,16 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#3498db',
     color: 'white',
     fontSize: 13,
+    fontWeight: 'bold',
+    cursor: 'pointer',
+  },
+  doneTradingBtn: {
+    padding: '12px 16px',
+    border: 'none',
+    borderRadius: 8,
+    background: 'linear-gradient(135deg, #2ecc71, #27ae60)',
+    color: 'white',
+    fontSize: 14,
     fontWeight: 'bold',
     cursor: 'pointer',
   },
