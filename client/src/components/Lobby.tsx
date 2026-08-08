@@ -1,12 +1,20 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useSocket } from '../hooks/useSocket';
 import { getStored, setStored } from '../storage';
 
-export default function Lobby({ onBack }: { onBack?: () => void }) {
+export default function Lobby({ onBack, initialRoomCode }: { onBack?: () => void; initialRoomCode?: string }) {
   const { connected, room, playerId, createRoom, joinRoom, toggleReady, addAI, removeAI, startGame, leaveRoom } = useSocket();
   const [name, setName] = useState(() => getStored('catan_name') || '');
-  const [roomCode, setRoomCode] = useState('');
+  const [roomCode, setRoomCode] = useState(initialRoomCode || '');
   const [showJoin, setShowJoin] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  // Auto-join when the app is opened with a ?room=CODE share link.
+  useEffect(() => {
+    if (connected && initialRoomCode && !room) {
+      joinRoom(initialRoomCode, name || 'Player');
+    }
+  }, [connected, initialRoomCode, room, joinRoom, name]);
 
   if (!connected) {
     return (
@@ -24,6 +32,19 @@ export default function Lobby({ onBack }: { onBack?: () => void }) {
     const allReady = room.players.every(p => p.ready);
     const canStart = isHost && room.players.length >= 2 && allReady;
 
+    const shareLink = `${window.location.origin}${window.location.pathname}?room=${room.id}`;
+
+    const handleShare = async () => {
+      try {
+        await navigator.clipboard.writeText(shareLink);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch {
+        // Fallback: prompt with the link so the user can copy it manually.
+        window.prompt('Copy this link to invite your family:', shareLink);
+      }
+    };
+
     return (
       <div style={styles.container}>
         <div style={styles.roomCard}>
@@ -32,6 +53,10 @@ export default function Lobby({ onBack }: { onBack?: () => void }) {
             <button type="button" style={styles.leaveBtn} onClick={leaveRoom}>Leave</button>
           </div>
           <p style={styles.shareHint}>Share this code with your family!</p>
+
+          <button type="button" style={styles.shareBtn} onClick={handleShare}>
+            {copied ? '✅ Link Copied!' : '🔗 Share Room Link'}
+          </button>
 
           <div style={styles.playerList}>
             {room.players.map(p => (
@@ -189,6 +214,18 @@ const styles: Record<string, React.CSSProperties> = {
   shareHint: {
     fontSize: 13,
     color: '#8890a0',
+    marginBottom: 14,
+  },
+  shareBtn: {
+    width: '100%',
+    padding: '12px 16px',
+    border: '1px solid #ffd700',
+    borderRadius: 8,
+    background: 'rgba(255,215,0,0.1)',
+    color: '#ffd700',
+    fontSize: 15,
+    fontWeight: 'bold',
+    cursor: 'pointer',
     marginBottom: 14,
   },
   leaveBtn: {

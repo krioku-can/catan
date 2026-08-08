@@ -11,7 +11,9 @@ type Mode = 'home' | 'local' | 'online' | 'profile' | 'resume';
 function OnlineShell({ onBack }: { onBack: () => void }) {
   const { gameState } = useSocket();
   if (gameState) return <OnlineGame />;
-  return <Lobby onBack={onBack} />;
+  // Read an optional ?room=CODE from the URL so a shared link auto-joins.
+  const roomFromUrl = new URLSearchParams(window.location.search).get('room');
+  return <Lobby onBack={onBack} initialRoomCode={roomFromUrl || undefined} />;
 }
 
 function Home({ onPick }: { onPick: (m: Mode) => void }) {
