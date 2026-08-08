@@ -54,9 +54,9 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'space-around',
     gap: 4,
-    padding: '6px 10px',
-    background: '#0f3460',
-    borderTop: '1px solid #1a1a2e',
+    padding: '5px 10px',
+    background: 'rgba(15, 52, 96, 0.92)',
+    border: '1px solid rgba(26, 26, 46, 0.8)',
     flexShrink: 0,
   },
   res: {

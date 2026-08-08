@@ -16,7 +16,7 @@ import DevCardPanel from './DevCardPanel';
 import { recordGame } from '../stats';
 import { setStored, getStored } from '../storage';
 
-const HEX_SIZE = 58;
+const HEX_SIZE = 68;
 
 interface GameProps {
   quickStart?: boolean;
@@ -34,7 +34,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
   const [diceRolling, setDiceRolling] = useState(false);
   const [robberMode, setRobberMode] = useState(false);
   const [stealTargets, setStealTargets] = useState<PlayerColor[]>([]);
-  const [showPanel, setShowPanel] = useState<'actions' | 'hand' | 'log' | null>('actions');
+  const [showPanel, setShowPanel] = useState<'actions' | 'hand' | 'log' | null>(null);
   const [diceFlash, setDiceFlash] = useState<{ total: number; faces: [number, number] } | null>(null);
   const [turnOrderRolls, setTurnOrderRolls] = useState<Record<string, number> | null>(null);
   const startedRef = useRef(false);
@@ -518,7 +518,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
         </div>
       </div>
 
-      <div style={styles.boardArea}>
+      <div className="board-stage" style={styles.boardArea}>
         <Board
           gameState={gameState}
           hexSize={HEX_SIZE}
@@ -533,6 +533,9 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           faces={diceFlash?.faces ?? null}
           onDone={() => setDiceFlash(null)}
         />
+        <div className="hand-bar-float">
+          <HandBar player={me} />
+        </div>
       </div>
 
       {gameState.setupPhase && isMyTurn && (
@@ -542,8 +545,6 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
             : '👆 Tap an edge for a road'}
         </div>
       )}
-
-      <HandBar player={me} />
 
       {/* Discard modal after a 7 */}
       {gameState.phase === 'discard' && me && gameState.discardQueue.includes(me.color) && (
@@ -590,121 +591,123 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
         />
       )}
 
-      <div style={styles.tabBar}>
-        <button
-          type="button"
-          style={{ ...styles.tab, ...(showPanel === 'actions' ? styles.tabActive : {}) }}
-          onClick={() => setShowPanel(showPanel === 'actions' ? null : 'actions')}
-        >
-          🎮 Actions
-        </button>
-        <button
-          type="button"
-          style={{ ...styles.tab, ...(showPanel === 'hand' ? styles.tabActive : {}) }}
-          onClick={() => setShowPanel(showPanel === 'hand' ? null : 'hand')}
-        >
-          🃏 Hand
-        </button>
-        <button
-          type="button"
-          style={{ ...styles.tab, ...(showPanel === 'log' ? styles.tabActive : {}) }}
-          onClick={() => setShowPanel(showPanel === 'log' ? null : 'log')}
-        >
-          📜 Log
-        </button>
-      </div>
-
-      {showPanel && (
-        <div className="bottom-sheet">
-          <div className="bottom-sheet-handle" aria-hidden />
-          <div className="bottom-sheet-body">
-            {showPanel === 'actions' && (
-              <>
-                {!gameState.setupPhase && (
-                  <>
-                    <DiceRoller
-                      onRoll={handleRollDice}
-                      rolling={diceRolling}
-                      disabled={gameState.phase !== 'roll' || !isMyTurn}
-                      result={gameState.dice}
-                    />
-                    <BuildMenu
-                      player={player}
-                      phase={gameState.phase}
-                      isMyTurn={isMyTurn}
-                      selectedAction={selectedAction}
-                      onSelectAction={setSelectedAction}
-                      onBuyDevCard={handleBuyDevCard}
-                      onPlayKnight={handlePlayKnight}
-                      onEndTurn={handleEndTurn}
-                      hasKnight={me.devCards.some(c => c.type === 'knight' && !c.played && !c.boughtThisTurn)}
-                      pendingFreeRoads={isMyTurn ? gameState.pendingDevRoads : 0}
-                    />
-                    <TradePanel
-                      gameState={gameState}
-                      isMyTurn={isMyTurn}
-                      phase={gameState.phase}
-                      onBankTrade={(give, want) => {
-                        const gRes = Object.keys(give)[0] as ResourceType | undefined;
-                        const wRes = Object.keys(want)[0] as ResourceType | undefined;
-                        if (!gRes || !wRes) return;
-                        const err = executeBankTrade(gameState, gRes, give[gRes] || 0, wRes);
-                        if (err === null) {
-                          addLog(`${player.name} bank-traded ${give[gRes]} ${gRes} → ${want[wRes]} ${wRes}`);
+      <div className="bottom-chrome">
+        {showPanel && (
+          <div className="bottom-sheet">
+            <div className="bottom-sheet-handle" aria-hidden />
+            <div className="bottom-sheet-body">
+              {showPanel === 'actions' && (
+                <>
+                  {!gameState.setupPhase && (
+                    <>
+                      <DiceRoller
+                        onRoll={handleRollDice}
+                        rolling={diceRolling}
+                        disabled={gameState.phase !== 'roll' || !isMyTurn}
+                        result={gameState.dice}
+                      />
+                      <BuildMenu
+                        player={player}
+                        phase={gameState.phase}
+                        isMyTurn={isMyTurn}
+                        selectedAction={selectedAction}
+                        onSelectAction={setSelectedAction}
+                        onBuyDevCard={handleBuyDevCard}
+                        onPlayKnight={handlePlayKnight}
+                        onEndTurn={handleEndTurn}
+                        hasKnight={me.devCards.some(c => c.type === 'knight' && !c.played && !c.boughtThisTurn)}
+                        pendingFreeRoads={isMyTurn ? gameState.pendingDevRoads : 0}
+                      />
+                      <TradePanel
+                        gameState={gameState}
+                        isMyTurn={isMyTurn}
+                        phase={gameState.phase}
+                        onBankTrade={(give, want) => {
+                          const gRes = Object.keys(give)[0] as ResourceType | undefined;
+                          const wRes = Object.keys(want)[0] as ResourceType | undefined;
+                          if (!gRes || !wRes) return;
+                          const err = executeBankTrade(gameState, gRes, give[gRes] || 0, wRes);
+                          if (err === null) {
+                            addLog(`${player.name} bank-traded ${give[gRes]} ${gRes} → ${want[wRes]} ${wRes}`);
+                            setGameState({ ...gameState });
+                          }
+                        }}
+                        onProposeTrade={(to, give, want) => {
+                          gameState.tradeOffers.push({ from: player.color, to, give, want });
+                          addLog(`${player.name} offered a trade to ${getPlayerByColor(gameState, to)?.name}`);
                           setGameState({ ...gameState });
-                        }
+                        }}
+                      />
+                      <DevCardPanel
+                        player={me}
+                        phase={gameState.phase}
+                        isMyTurn={isMyTurn}
+                        onPlayKnight={handlePlayKnight}
+                        onPlayRoadBuilding={handlePlayRoadBuilding}
+                        onPlayYearOfPlenty={handlePlayYearOfPlenty}
+                        onPlayMonopoly={handlePlayMonopoly}
+                      />
+                      {gameState.phase === 'trade' && isMyTurn && (
+                        <button style={styles.doneTradingBtn} onClick={handleSkipTrade}>
+                          ✅ Done Trading
+                        </button>
+                      )}
+                    </>
+                  )}
+                  {gameState.setupPhase && (
+                    <div style={styles.setupMsg}>
+                      {isMyTurn ? 'Place your pieces on the board' : 'AI is placing…'}
+                    </div>
+                  )}
+                </>
+              )}
+              {showPanel === 'hand' && (
+                <>
+                  <PlayerHand player={me} isMe />
+                  {gameState.players.filter(p => p.color !== me.color).map(p => (
+                    <PlayerHand
+                      key={p.color}
+                      player={{
+                        ...p,
+                        _hidden: true,
+                        _resourceCount: (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
+                          .reduce((s, r) => s + (p.resources[r] || 0), 0),
+                        _devCardCount: countHeldDevCards(p),
                       }}
-                      onProposeTrade={(to, give, want) => {
-                        gameState.tradeOffers.push({ from: player.color, to, give, want });
-                        addLog(`${player.name} offered a trade to ${getPlayerByColor(gameState, to)?.name}`);
-                        setGameState({ ...gameState });
-                      }}
+                      isMe={false}
                     />
-                    <DevCardPanel
-                      player={me}
-                      phase={gameState.phase}
-                      isMyTurn={isMyTurn}
-                      onPlayKnight={handlePlayKnight}
-                      onPlayRoadBuilding={handlePlayRoadBuilding}
-                      onPlayYearOfPlenty={handlePlayYearOfPlenty}
-                      onPlayMonopoly={handlePlayMonopoly}
-                    />
-                    {gameState.phase === 'trade' && isMyTurn && (
-                      <button style={styles.doneTradingBtn} onClick={handleSkipTrade}>
-                        ✅ Done Trading
-                      </button>
-                    )}
-                  </>
-                )}
-                {gameState.setupPhase && (
-                  <div style={styles.setupMsg}>
-                    {isMyTurn ? 'Place your pieces on the board' : 'AI is placing…'}
-                  </div>
-                )}
-              </>
-            )}
-            {showPanel === 'hand' && (
-              <>
-                <PlayerHand player={me} isMe />
-                {gameState.players.filter(p => p.color !== me.color).map(p => (
-                  <PlayerHand
-                    key={p.color}
-                    player={{
-                      ...p,
-                      _hidden: true,
-                      _resourceCount: (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
-                        .reduce((s, r) => s + (p.resources[r] || 0), 0),
-                      _devCardCount: countHeldDevCards(p),
-                    }}
-                    isMe={false}
-                  />
-                ))}
-              </>
-            )}
-            {showPanel === 'log' && <GameLog log={log} />}
+                  ))}
+                </>
+              )}
+              {showPanel === 'log' && <GameLog log={log} />}
+            </div>
           </div>
+        )}
+
+        <div style={styles.tabBar}>
+          <button
+            type="button"
+            style={{ ...styles.tab, ...(showPanel === 'actions' ? styles.tabActive : {}) }}
+            onClick={() => setShowPanel(showPanel === 'actions' ? null : 'actions')}
+          >
+            🎮 Actions
+          </button>
+          <button
+            type="button"
+            style={{ ...styles.tab, ...(showPanel === 'hand' ? styles.tabActive : {}) }}
+            onClick={() => setShowPanel(showPanel === 'hand' ? null : 'hand')}
+          >
+            🃏 Hand
+          </button>
+          <button
+            type="button"
+            style={{ ...styles.tab, ...(showPanel === 'log' ? styles.tabActive : {}) }}
+            onClick={() => setShowPanel(showPanel === 'log' ? null : 'log')}
+          >
+            📜 Log
+          </button>
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -863,7 +866,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'transparent', color: '#e74c3c', cursor: 'pointer', fontSize: 16, fontWeight: 'bold',
   },
   boardArea: {
-    flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
+    // sizing comes from .board-stage; keep empty inline overrides minimal
   },
   setupHintBar: {
     textAlign: 'center', color: '#ffd700', fontSize: 13, fontWeight: 'bold',

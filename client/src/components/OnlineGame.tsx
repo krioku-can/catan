@@ -13,14 +13,14 @@ import DiscardModal from './DiscardModal';
 import DevCardPanel from './DevCardPanel';
 import TradeOffers from './TradeOffers';
 
-const HEX_SIZE = 58;
+const HEX_SIZE = 68;
 
 export default function OnlineGame() {
   const { gameState, playerId, room, sendAction, sendChat, chatMessages, leaveRoom } = useSocket();
   const [selectedAction, setSelectedAction] = useState<string | null>(null);
   const [robberMode, setRobberMode] = useState(false);
   const [chatInput, setChatInput] = useState('');
-  const [showPanel, setShowPanel] = useState<'actions' | 'hand' | 'chat' | null>('actions');
+  const [showPanel, setShowPanel] = useState<'actions' | 'hand' | 'chat' | null>(null);
   const [diceFlash, setDiceFlash] = useState<{ total: number; faces: [number, number] } | null>(null);
 
   // Flash the rolled number whenever the server syncs a new dice result.
@@ -151,8 +151,8 @@ export default function OnlineGame() {
         </div>
       </div>
 
-      {/* Board */}
-      <div style={styles.boardArea}>
+      {/* Board — fills remaining space; menus overlay instead of shrinking it */}
+      <div className="board-stage" style={styles.boardArea}>
         <Board
           gameState={gameState}
           hexSize={HEX_SIZE}
@@ -167,6 +167,11 @@ export default function OnlineGame() {
           faces={diceFlash?.faces ?? null}
           onDone={() => setDiceFlash(null)}
         />
+        {myPlayer && (
+          <div className="hand-bar-float">
+            <HandBar player={myPlayer} />
+          </div>
+        )}
       </div>
 
       {/* Setup hint */}
@@ -177,8 +182,6 @@ export default function OnlineGame() {
             : '👆 Tap an edge to place a road'}
         </div>
       )}
-
-      {myPlayer && <HandBar player={myPlayer} />}
 
       {/* Discard modal after a 7 */}
       {gameState.phase === 'discard' && myPlayer && gameState.discardQueue.includes(myPlayer.color) && (
@@ -203,124 +206,125 @@ export default function OnlineGame() {
         />
       )}
 
-      {/* Bottom tab bar */}
-      <div style={styles.tabBar}>
-        <button
-          style={{ ...styles.tab, ...(showPanel === 'actions' ? styles.tabActive : {}) }}
-          onClick={() => setShowPanel(showPanel === 'actions' ? null : 'actions')}
-        >
-          🎮 Actions
-        </button>
-        <button
-          style={{ ...styles.tab, ...(showPanel === 'hand' ? styles.tabActive : {}) }}
-          onClick={() => setShowPanel(showPanel === 'hand' ? null : 'hand')}
-        >
-          🃏 Hand
-        </button>
-        <button
-          style={{ ...styles.tab, ...(showPanel === 'chat' ? styles.tabActive : {}) }}
-          onClick={() => setShowPanel(showPanel === 'chat' ? null : 'chat')}
-        >
-          💬 Chat{chatMessages.length > 0 ? ` (${chatMessages.length})` : ''}
-        </button>
-      </div>
-
-      {/* Slide-up panel — single scroll container (class for reliable mobile scroll) */}
-      {showPanel && (
-        <div className="bottom-sheet" style={styles.panelChrome}>
-          <div className="bottom-sheet-handle" aria-hidden />
-          {showPanel === 'actions' && (
-            <div className="bottom-sheet-body">
-              {!gameState.setupPhase && (
-                <>
-                  <DiceRoller
-                    onRoll={handleRollDice}
-                    rolling={false}
-                    disabled={gameState.phase !== 'roll' || !isMyTurn}
-                    result={gameState.dice}
-                  />
-                  <BuildMenu
-                    player={player}
-                    phase={gameState.phase}
-                    isMyTurn={isMyTurn}
-                    selectedAction={selectedAction}
-                    onSelectAction={setSelectedAction}
-                    onBuyDevCard={handleBuyDevCard}
-                    onPlayKnight={handlePlayKnight}
-                    onEndTurn={handleEndTurn}
-                    hasKnight={player.devCards.some(c => c.type === 'knight' && !c.played && !c.boughtThisTurn)}
-                    pendingFreeRoads={isMyTurn ? gameState.pendingDevRoads : 0}
-                  />
-                  <TradePanel
-                    gameState={gameState}
-                    isMyTurn={isMyTurn}
-                    phase={gameState.phase}
-                    onBankTrade={handleBankTrade}
-                    onProposeTrade={handleProposeTrade}
-                  />
-                  <DevCardPanel
-                    player={myPlayer || player}
-                    phase={gameState.phase}
-                    isMyTurn={isMyTurn}
-                    onPlayKnight={handlePlayKnight}
-                    onPlayRoadBuilding={handlePlayRoadBuilding}
-                    onPlayYearOfPlenty={handlePlayYearOfPlenty}
-                    onPlayMonopoly={handlePlayMonopoly}
-                  />
-                  {gameState.phase === 'trade' && isMyTurn && (
-                    <button style={styles.doneTradingBtn} onClick={handleSkipTrade}>
-                      ✅ Done Trading
-                    </button>
-                  )}
-                </>
-              )}
-              {gameState.setupPhase && (
-                <div style={styles.setupMsg}>
-                  Place your settlements and roads to start the game!
-                </div>
-              )}
-            </div>
-          )}
-
-          {showPanel === 'hand' && myPlayer && (
-            <div className="bottom-sheet-body">
-              <PlayerHand player={myPlayer} isMe />
-              <div style={styles.otherPlayers}>
-                {gameState.players.filter(p => p.color !== myPlayer.color).map(p => (
-                  <PlayerHand key={p.color} player={p} isMe={false} />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {showPanel === 'chat' && (
-            <div className="bottom-sheet-body">
-              <div style={styles.chatMessages}>
-                {chatMessages.length === 0 && (
-                  <div style={styles.chatEmpty}>No messages yet</div>
+      {/* Bottom chrome: tab bar always visible; sheet overlays board above it */}
+      <div className="bottom-chrome">
+        {showPanel && (
+          <div className="bottom-sheet" style={styles.panelChrome}>
+            <div className="bottom-sheet-handle" aria-hidden />
+            {showPanel === 'actions' && (
+              <div className="bottom-sheet-body">
+                {!gameState.setupPhase && (
+                  <>
+                    <DiceRoller
+                      onRoll={handleRollDice}
+                      rolling={false}
+                      disabled={gameState.phase !== 'roll' || !isMyTurn}
+                      result={gameState.dice}
+                    />
+                    <BuildMenu
+                      player={player}
+                      phase={gameState.phase}
+                      isMyTurn={isMyTurn}
+                      selectedAction={selectedAction}
+                      onSelectAction={setSelectedAction}
+                      onBuyDevCard={handleBuyDevCard}
+                      onPlayKnight={handlePlayKnight}
+                      onEndTurn={handleEndTurn}
+                      hasKnight={player.devCards.some(c => c.type === 'knight' && !c.played && !c.boughtThisTurn)}
+                      pendingFreeRoads={isMyTurn ? gameState.pendingDevRoads : 0}
+                    />
+                    <TradePanel
+                      gameState={gameState}
+                      isMyTurn={isMyTurn}
+                      phase={gameState.phase}
+                      onBankTrade={handleBankTrade}
+                      onProposeTrade={handleProposeTrade}
+                    />
+                    <DevCardPanel
+                      player={myPlayer || player}
+                      phase={gameState.phase}
+                      isMyTurn={isMyTurn}
+                      onPlayKnight={handlePlayKnight}
+                      onPlayRoadBuilding={handlePlayRoadBuilding}
+                      onPlayYearOfPlenty={handlePlayYearOfPlenty}
+                      onPlayMonopoly={handlePlayMonopoly}
+                    />
+                    {gameState.phase === 'trade' && isMyTurn && (
+                      <button style={styles.doneTradingBtn} onClick={handleSkipTrade}>
+                        ✅ Done Trading
+                      </button>
+                    )}
+                  </>
                 )}
-                {chatMessages.slice(-20).map((msg, i) => (
-                  <div key={i} style={styles.chatMsg}>
-                    <span style={{ color: msg.playerColor, fontWeight: 'bold' }}>{msg.playerName}:</span>
-                    {' '}{msg.text}
+                {gameState.setupPhase && (
+                  <div style={styles.setupMsg}>
+                    Place your settlements and roads to start the game!
                   </div>
-                ))}
+                )}
               </div>
-              <div style={styles.chatInputRow}>
-                <input
-                  style={styles.chatInput}
-                  value={chatInput}
-                  onChange={e => setChatInput(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleSendChat()}
-                  placeholder="Type a message..."
-                  maxLength={100}
-                />
-                <button style={styles.chatSendBtn} onClick={handleSendChat}>Send</button>
+            )}
+
+            {showPanel === 'hand' && myPlayer && (
+              <div className="bottom-sheet-body">
+                <PlayerHand player={myPlayer} isMe />
+                <div style={styles.otherPlayers}>
+                  {gameState.players.filter(p => p.color !== myPlayer.color).map(p => (
+                    <PlayerHand key={p.color} player={p} isMe={false} />
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            )}
+
+            {showPanel === 'chat' && (
+              <div className="bottom-sheet-body">
+                <div style={styles.chatMessages}>
+                  {chatMessages.length === 0 && (
+                    <div style={styles.chatEmpty}>No messages yet</div>
+                  )}
+                  {chatMessages.slice(-20).map((msg, i) => (
+                    <div key={i} style={styles.chatMsg}>
+                      <span style={{ color: msg.playerColor, fontWeight: 'bold' }}>{msg.playerName}:</span>
+                      {' '}{msg.text}
+                    </div>
+                  ))}
+                </div>
+                <div style={styles.chatInputRow}>
+                  <input
+                    style={styles.chatInput}
+                    value={chatInput}
+                    onChange={e => setChatInput(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleSendChat()}
+                    placeholder="Type a message..."
+                    maxLength={100}
+                  />
+                  <button style={styles.chatSendBtn} onClick={handleSendChat}>Send</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div style={styles.tabBar}>
+          <button
+            style={{ ...styles.tab, ...(showPanel === 'actions' ? styles.tabActive : {}) }}
+            onClick={() => setShowPanel(showPanel === 'actions' ? null : 'actions')}
+          >
+            🎮 Actions
+          </button>
+          <button
+            style={{ ...styles.tab, ...(showPanel === 'hand' ? styles.tabActive : {}) }}
+            onClick={() => setShowPanel(showPanel === 'hand' ? null : 'hand')}
+          >
+            🃏 Hand
+          </button>
+          <button
+            style={{ ...styles.tab, ...(showPanel === 'chat' ? styles.tabActive : {}) }}
+            onClick={() => setShowPanel(showPanel === 'chat' ? null : 'chat')}
+          >
+            💬 Chat{chatMessages.length > 0 ? ` (${chatMessages.length})` : ''}
+          </button>
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -394,12 +398,7 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1,
   },
   boardArea: {
-    flex: 1,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-    position: 'relative',
+    // layout from .board-stage
   },
   setupHint: {
     position: 'absolute',
