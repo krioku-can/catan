@@ -20,10 +20,8 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#0f3460',
     borderRadius: 8,
     padding: 12,
-    flex: 1,
     display: 'flex',
     flexDirection: 'column',
-    minHeight: 0,
   },
   header: {
     fontSize: 13,
@@ -33,8 +31,6 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: 8,
   },
   logArea: {
-    flex: 1,
-    overflowY: 'auto',
     fontSize: 12,
     color: '#b0b0b0',
     display: 'flex',

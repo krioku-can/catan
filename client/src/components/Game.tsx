@@ -615,8 +615,9 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
       </div>
 
       {showPanel && (
-        <div style={styles.panel}>
-          <div style={styles.panelContent}>
+        <div className="bottom-sheet">
+          <div className="bottom-sheet-handle" aria-hidden />
+          <div className="bottom-sheet-body">
             {showPanel === 'actions' && (
               <>
                 {!gameState.setupPhase && (
@@ -876,15 +877,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#8890a0', fontSize: 12, fontWeight: 'bold', cursor: 'pointer',
   },
   tabActive: { color: '#ffd700', borderBottom: '2px solid #ffd700' },
-  panel: {
-    maxHeight: '60vh', overflow: 'hidden', background: '#16213e',
-    borderTop: '1px solid #0f3460', flexShrink: 0,
-    display: 'flex', flexDirection: 'column',
-  },
-  panelContent: {
-    padding: 12, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8,
-    flex: 1, minHeight: 0,
-  },
   setupMsg: { textAlign: 'center', color: '#8890a0', fontSize: 14, padding: 16 },
   setupScreen: {
     display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',

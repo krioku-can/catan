@@ -225,11 +225,12 @@ export default function OnlineGame() {
         </button>
       </div>
 
-      {/* Slide-up panel */}
+      {/* Slide-up panel — single scroll container (class for reliable mobile scroll) */}
       {showPanel && (
-        <div style={styles.panel}>
+        <div className="bottom-sheet" style={styles.panelChrome}>
+          <div className="bottom-sheet-handle" aria-hidden />
           {showPanel === 'actions' && (
-            <div style={styles.panelContent}>
+            <div className="bottom-sheet-body">
               {!gameState.setupPhase && (
                 <>
                   <DiceRoller
@@ -282,7 +283,7 @@ export default function OnlineGame() {
           )}
 
           {showPanel === 'hand' && myPlayer && (
-            <div style={styles.panelContent}>
+            <div className="bottom-sheet-body">
               <PlayerHand player={myPlayer} isMe />
               <div style={styles.otherPlayers}>
                 {gameState.players.filter(p => p.color !== myPlayer.color).map(p => (
@@ -293,7 +294,7 @@ export default function OnlineGame() {
           )}
 
           {showPanel === 'chat' && (
-            <div style={styles.panelContent}>
+            <div className="bottom-sheet-body">
               <div style={styles.chatMessages}>
                 {chatMessages.length === 0 && (
                   <div style={styles.chatEmpty}>No messages yet</div>
@@ -436,23 +437,8 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#ffd700',
     borderBottom: '2px solid #ffd700',
   },
-  panel: {
-    maxHeight: '60vh',
-    overflow: 'hidden',
-    display: 'flex',
-    flexDirection: 'column',
-    background: '#16213e',
-    borderTop: '1px solid #0f3460',
-    flexShrink: 0,
-  },
-  panelContent: {
-    padding: 12,
-    overflowY: 'auto',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 8,
-    flex: 1,
-    minHeight: 0,
+  panelChrome: {
+    // Visual bits only — sizing/scroll live on .bottom-sheet CSS class
   },
   setupMsg: {
     textAlign: 'center',
@@ -467,13 +453,13 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: 8,
   },
   chatMessages: {
-    maxHeight: 200,
-    overflowY: 'auto',
+    // Scroll with the whole bottom sheet (no nested maxHeight trap)
     fontSize: 13,
     display: 'flex',
     flexDirection: 'column',
     gap: 4,
     padding: 4,
+    minHeight: 80,
   },
   chatEmpty: {
     textAlign: 'center',
@@ -487,6 +473,11 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     gap: 6,
     marginTop: 4,
+    position: 'sticky',
+    bottom: 0,
+    background: '#16213e',
+    paddingTop: 8,
+    paddingBottom: 4,
   },
   chatInput: {
     flex: 1,
