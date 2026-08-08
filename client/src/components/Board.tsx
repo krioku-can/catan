@@ -269,7 +269,7 @@ function drawRoad(
 }
 
 function drawPortBadge(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number, label: string) {
-  const r = size * 0.24;
+  const r = size * 0.22;
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
   ctx.fillStyle = '#f5f0e1';
@@ -278,11 +278,21 @@ function drawPortBadge(ctx: CanvasRenderingContext2D, cx: number, cy: number, si
   ctx.lineWidth = 2;
   ctx.stroke();
   ctx.fillStyle = '#2c2416';
-  ctx.font = `bold ${Math.max(11, size * 0.14)}px Arial`;
+  ctx.font = `bold ${Math.max(10, size * 0.13)}px Arial`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(label, cx, cy);
 }
+
+// Pointy-top neighbor across edge `dir` (matches PORT_LAYOUT / getPortIntersections).
+const EDGE_NEIGHBOR: [number, number][] = [
+  [1, 0],
+  [1, -1],
+  [0, -1],
+  [-1, 0],
+  [-1, 1],
+  [0, 1],
+];
 
 function buildIntersectionPositions(
   board: { q: number; r: number }[],
@@ -407,6 +417,8 @@ export default function Board({
       );
     });
 
+    // Draw ports AFTER land hexes so badges sit in water, never under/on number tokens.
+    // Placement is geometric: badge is always on the WATER side of the harbor edge.
     if (gameState.ports?.length) {
       const boardCx = W / 2;
       const boardCy = H / 2;
@@ -420,24 +432,19 @@ export default function Board({
         const ay = pa.y + boardCy;
         const bx = pb.x + boardCx;
         const by = pb.y + boardCy;
-        const mx = (ax + bx) / 2;
-        const my = (ay + by) / 2;
+        const edgeMx = (ax + bx) / 2;
+        const edgeMy = (ay + by) / 2;
 
-        // Perpendicular to the coastal edge; pick the side pointing OUT to water
-        // (farther from board center than the edge midpoint).
-        let nx = -(by - ay);
-        let ny = bx - ax;
-        const nlen = Math.hypot(nx, ny) || 1;
-        nx /= nlen;
-        ny /= nlen;
-        const distMid = Math.hypot(mx - boardCx, my - boardCy);
-        const distPos = Math.hypot(mx + nx - boardCx, my + ny - boardCy);
-        if (distPos < distMid) {
-          nx = -nx;
-          ny = -ny;
-        }
+        // Water hex center across this coastal edge — authoritative "outward" direction.
+        const [dq, dr] = EDGE_NEIGHBOR[port.direction] || [0, 0];
+        const water = hexToPixel(port.q + dq, port.r + dr, hexSize);
+        const wx = water.x + boardCx;
+        const wy = water.y + boardCy;
 
-        // Labels: "3:1" or "2:1" + resource letter (canvas emoji is unreliable)
+        // Badge sits in the water, between the coastal edge and the water hex center.
+        const badgeX = edgeMx * 0.35 + wx * 0.65;
+        const badgeY = edgeMy * 0.35 + wy * 0.65;
+
         let label = '3:1';
         if (port.type.startsWith('2:1')) {
           const res = port.type.split(':')[2];
@@ -447,38 +454,31 @@ export default function Board({
           label = `2:${letters[res] || '?'}`;
         }
 
-        // Short dock ON the harbor edge only — no long lines into the island.
-        const outward = hexSize * 0.48;
-        const stub = hexSize * 0.22;
-
         ctx.save();
-        ctx.strokeStyle = 'rgba(245, 240, 225, 0.95)';
-        ctx.lineWidth = Math.max(4, hexSize * 0.1);
+        // Thin pier legs: ONLY edge corners → badge (stay in the water wedge)
+        ctx.strokeStyle = 'rgba(245, 240, 225, 0.9)';
+        ctx.lineWidth = Math.max(2.5, hexSize * 0.055);
         ctx.lineCap = 'round';
-        // Harbor berth along the two vertices
         ctx.beginPath();
         ctx.moveTo(ax, ay);
-        ctx.lineTo(bx, by);
+        ctx.lineTo(badgeX, badgeY);
+        ctx.moveTo(bx, by);
+        ctx.lineTo(badgeX, badgeY);
         ctx.stroke();
-        // Short outward stubs
+
+        // Mark the two corners that unlock this harbor (small, on the coast)
         for (const [x, y] of [[ax, ay], [bx, by]] as const) {
           ctx.beginPath();
-          ctx.moveTo(x, y);
-          ctx.lineTo(x + nx * stub, y + ny * stub);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.arc(x, y, Math.max(3.5, hexSize * 0.08), 0, Math.PI * 2);
+          ctx.arc(x, y, Math.max(3, hexSize * 0.07), 0, Math.PI * 2);
           ctx.fillStyle = '#f5f0e1';
           ctx.fill();
           ctx.strokeStyle = '#5d4e37';
-          ctx.lineWidth = 1.5;
+          ctx.lineWidth = 1.25;
           ctx.stroke();
-          ctx.strokeStyle = 'rgba(245, 240, 225, 0.95)';
-          ctx.lineWidth = Math.max(4, hexSize * 0.1);
         }
         ctx.restore();
 
-        drawPortBadge(ctx, mx + nx * outward, my + ny * outward, hexSize, label);
+        drawPortBadge(ctx, badgeX, badgeY, hexSize, label);
       });
     }
 
