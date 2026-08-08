@@ -325,10 +325,10 @@ function drawOfficialHarbor(
   ox /= olen;
   oy /= olen;
 
-  // Plaque center: just off the coastal edge into the water (like the reference)
-  const pierLen = size * 0.62;
-  const px = edgeMx + ox * pierLen;
-  const py = edgeMy + oy * pierLen;
+  // Plaque sits ON the water hex itself — guaranteed off the land faces.
+  // Blend heavily toward the water hex center so it never rides the coast.
+  const px = edgeMx * 0.1 + waterX * 0.9;
+  const py = edgeMy * 0.1 + waterY * 0.9;
 
   const isGeneric = portType === '3:1';
   let ratio = '3:1';
@@ -367,7 +367,8 @@ function drawOfficialHarbor(
   ctx.globalCompositeOperation = 'source-over';
 
   // --- Upright gold plaque (NO rotation — text always readable) ---
-  const s = size * 0.38; // half-width of plaque
+  // Shrunk so it sits comfortably inside the water hex without touching land.
+  const s = size * 0.30; // half-width of plaque
   // Rounded square
   roundRect(ctx, px - s, py - s, s * 2, s * 2, s * 0.28);
   const fill = ctx.createLinearGradient(px, py - s, px, py + s);
