@@ -121,8 +121,33 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           gameState.phase = 'build';
           break;
         case 'discard':
-          // aiTurn already applied the discard; just log it
-          addLog(`${current.name} discarded cards after the 7`);
+          // aiTurn already applied the current AI's discard. But a 7 can put
+          // MULTIPLE AI players in the discard queue at once (the current AI
+          // rolled, other AIs also had >7 cards). Drain the rest of the AI
+          // discard queue so it doesn't freeze waiting on them.
+          {
+            let guard = 0;
+            while (gameState.phase === 'discard' && guard++ < 10) {
+              const aiInQueue = gameState.players.find(
+                p => p.isAI && gameState.discardQueue.includes(p.color)
+              );
+              if (!aiInQueue) break;
+              const total = (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
+                .reduce((s, r) => s + (aiInQueue.resources[r] || 0), 0);
+              const mustDiscard = Math.floor(total / 2);
+              const toDiscard: Partial<Record<ResourceType, number>> = {};
+              let remaining = mustDiscard;
+              const sorted = (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
+                .sort((a, b) => (aiInQueue.resources[b] || 0) - (aiInQueue.resources[a] || 0));
+              for (const r of sorted) {
+                if (remaining <= 0) break;
+                const take = Math.min(aiInQueue.resources[r] || 0, remaining);
+                if (take > 0) { toDiscard[r] = take; remaining -= take; }
+              }
+              discardResources(gameState, aiInQueue.color, toDiscard);
+              addLog(`${aiInQueue.name} discarded cards after the 7`);
+            }
+          }
           break;
         case 'place_settlement':
           if (gameState.setupPhase) placeSetupSettlement(gameState, action.data.key);
