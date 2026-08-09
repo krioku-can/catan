@@ -92,6 +92,8 @@ export interface GameState {
   round: number; // setup rounds count
   dice: [number, number] | null;
   robberHex: string; // q,r of hex with robber
+  /** True once the robber has been moved this turn (7 roll or knight). */
+  robberMovedThisTurn: boolean;
   longestRoad: { color?: PlayerColor; length: number };
   largestArmy: { color?: PlayerColor; size: number };
   tradeOffers: TradeOffer[];

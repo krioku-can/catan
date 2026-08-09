@@ -103,6 +103,7 @@ export function createInitialState(config: GameConfig): GameState {
     round: 0,
     dice: null,
     robberHex: `${robberTile.q},${robberTile.r}`,
+    robberMovedThisTurn: false,
     longestRoad: { length: 0 },
     largestArmy: { size: 0 },
     tradeOffers: [],
@@ -326,6 +327,7 @@ export function moveRobber(state: GameState, targetHexQ: number, targetHexR: num
   if (oldTile) oldTile.hasRobber = false;
   newTile.hasRobber = true;
   state.robberHex = `${targetHexQ},${targetHexR}`;
+  state.robberMovedThisTurn = true;
 
   // Steal a random resource from a player with settlements on this hex
   if (stealFrom) {
@@ -339,6 +341,40 @@ export function moveRobber(state: GameState, targetHexQ: number, targetHexR: num
     }
   }
 
+  return null;
+}
+
+// Get players who have a settlement/city on a given hex AND have resources to
+// steal. Used to determine legal steal targets after moving the robber.
+export function getStealTargets(
+  state: GameState,
+  hexQ: number,
+  hexR: number,
+): PlayerColor[] {
+  const current = getCurrentPlayer(state).color;
+  const targets: PlayerColor[] = [];
+  const corners = getHexCorners(hexQ, hexR);
+  corners.forEach(cKey => {
+    const inter = state.intersections[cKey];
+    if (!inter?.owner || inter.owner === current) return;
+    const p = getPlayerByColor(state, inter.owner);
+    if (!p) return;
+    const hasRes = RESOURCES.some(r => (p.resources[r] || 0) > 0);
+    if (hasRes && !targets.includes(inter.owner)) targets.push(inter.owner);
+  });
+  return targets;
+}
+
+// Steal a random resource from a target player (robber already moved).
+export function stealFrom(state: GameState, target: PlayerColor): string | null {
+  const t = getPlayerByColor(state, target);
+  if (!t) return 'Invalid target';
+  const hasResources = RESOURCES.some(r => (t.resources[r] || 0) > 0);
+  if (!hasResources) return 'Target has no resources';
+  const available = RESOURCES.filter(r => (t.resources[r] || 0) > 0);
+  const stolen = available[Math.floor(Math.random() * available.length)];
+  t.resources[stolen]--;
+  getCurrentPlayer(state).resources[stolen]++;
   return null;
 }
 
@@ -591,6 +627,7 @@ export function endTurn(state: GameState): void {
   state.pendingDevRoads = 0;
   state.tradeOffers = [];
   state.dice = null;
+  state.robberMovedThisTurn = false;
 
   // Official: game ends when a player reaches 10 VP on their turn.
   if (ending.victoryPoints >= 10) {
@@ -838,6 +875,39 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
   }
 
   if (state.phase === 'trade') {
+    // After a 7 (or a knight), the AI must move the robber and steal before
+    // trading/building. If the robber hasn't been moved this turn, do it now.
+    if (!state.robberMovedThisTurn) {
+      // Pick a hex with enemy settlements/cities (prefer one with the most
+      // enemy pieces, and avoid the current robber hex).
+      const [rq, rr] = state.robberHex.split(',').map(Number);
+      const candidates: { q: number; r: number; score: number }[] = [];
+      state.board.forEach(tile => {
+        if (tile.type === 'water' || tile.type === 'desert') return;
+        if (tile.q === rq && tile.r === rr) return;
+        const corners = getHexCorners(tile.q, tile.r);
+        let score = 0;
+        corners.forEach(cKey => {
+          const inter = state.intersections[cKey];
+          if (inter?.owner && inter.owner !== player.color) score++;
+        });
+        if (score > 0) candidates.push({ q: tile.q, r: tile.r, score });
+      });
+      if (candidates.length > 0) {
+        candidates.sort((a, b) => b.score - a.score);
+        const best = candidates[0];
+        // Move the robber, then steal from a random enemy on that hex.
+        moveRobber(state, best.q, best.r);
+        const targets = getStealTargets(state, best.q, best.r);
+        if (targets.length > 0) {
+          const target = targets[Math.floor(Math.random() * targets.length)];
+          stealFrom(state, target);
+        }
+        return { action: 'move_robber', data: { q: best.q, r: best.r } };
+      }
+      // No valid target — mark moved so we don't loop.
+      state.robberMovedThisTurn = true;
+    }
     // AI skips trading and goes to build
     state.phase = 'build';
     return { action: 'skip_trade' };

@@ -16,9 +16,11 @@ import TradeOffers from './TradeOffers';
 const HEX_SIZE = 68;
 
 export default function OnlineGame() {
-  const { gameState, playerId, room, sendAction, sendChat, chatMessages, leaveRoom } = useSocket();
+  const { gameState, playerId, room, sendAction, sendChat, chatMessages, leaveRoom, lastActionResult } = useSocket();
   const [selectedAction, setSelectedAction] = useState<string | null>(null);
   const [robberMode, setRobberMode] = useState(false);
+  const [stealTargets, setStealTargets] = useState<PlayerColor[]>([]);
+  const [pendingSteal, setPendingSteal] = useState<{ q: number; r: number } | null>(null);
   const [chatInput, setChatInput] = useState('');
   const [showPanel, setShowPanel] = useState<'actions' | 'hand' | 'chat' | null>(null);
   const [diceFlash, setDiceFlash] = useState<{ total: number; faces: [number, number] } | null>(null);
@@ -30,6 +32,14 @@ export default function OnlineGame() {
       setDiceFlash({ total: gameState.dice[0] + gameState.dice[1], faces: [gameState.dice[0], gameState.dice[1]] });
     }
   }, [gameState?.dice?.[0], gameState?.dice?.[1]]);
+
+  // When the server confirms a robber move, surface the steal-target picker.
+  useEffect(() => {
+    if (lastActionResult?.action === 'move_robber' && lastActionResult.result?.stealTargets?.length) {
+      setStealTargets(lastActionResult.result.stealTargets);
+      setPendingSteal({ q: 0, r: 0 }); // robber already moved; steal uses current robberHex
+    }
+  }, [lastActionResult]);
 
   if (!gameState || !room) return null;
 
@@ -45,6 +55,14 @@ export default function OnlineGame() {
     sendAction('move_robber', { q, r });
     setRobberMode(false);
   }, [robberMode, sendAction]);
+
+  const handleSteal = useCallback((target: PlayerColor) => {
+    if (!gameState) return;
+    const [rq, rr] = gameState.robberHex.split(',').map(Number);
+    sendAction('steal', { q: rq, r: rr, target });
+    setPendingSteal(null);
+    setStealTargets([]);
+  }, [gameState, sendAction]);
 
   const handleIntersectionClick = useCallback((key: string) => {
     if (selectedAction === 'settlement') {
@@ -200,6 +218,28 @@ export default function OnlineGame() {
           )}
           onDiscard={handleDiscard}
         />
+      )}
+
+      {/* Steal target picker after moving the robber */}
+      {pendingSteal && stealTargets.length > 0 && (
+        <div style={styles.stealOverlay}>
+          <div style={styles.stealCard}>
+            <div style={styles.stealTitle}>🦹 Choose who to steal from</div>
+            {stealTargets.map(color => {
+              const p = gameState.players.find(pl => pl.color === color);
+              return (
+                <button
+                  key={color}
+                  style={{ ...styles.stealBtn, borderColor: color }}
+                  onClick={() => handleSteal(color)}
+                >
+                  <span style={{ ...styles.stealDot, backgroundColor: color }} />
+                  {p?.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       )}
 
       {/* Incoming domestic trade offers */}
@@ -420,6 +460,22 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'rgba(0,0,0,0.6)',
     zIndex: 5,
   },
+  stealOverlay: {
+    position: 'fixed', inset: 0, zIndex: 50,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    background: 'rgba(0,0,0,0.6)',
+  },
+  stealCard: {
+    background: '#16213e', borderRadius: 12, padding: 20, width: '100%', maxWidth: 320,
+    display: 'flex', flexDirection: 'column', gap: 10,
+  },
+  stealTitle: { color: '#ffd700', fontSize: 15, fontWeight: 'bold', textAlign: 'center', marginBottom: 4 },
+  stealBtn: {
+    display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px',
+    border: '2px solid', borderRadius: 8, background: '#1a1a2e', color: '#e0e0e0',
+    fontSize: 15, fontWeight: 'bold', cursor: 'pointer',
+  },
+  stealDot: { width: 14, height: 14, borderRadius: '50%', flexShrink: 0 },
   tabBar: {
     display: 'flex',
     background: '#0f3460',

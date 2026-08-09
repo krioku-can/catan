@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { GameState, GameConfig, PlayerColor, ResourceType } from '../game/types';
-import { createInitialState, getCurrentPlayer, getPlayerByColor, executeTrade, executeBankTrade, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, countHeldDevCards } from '../game/rules';
+import { createInitialState, getCurrentPlayer, getPlayerByColor, executeTrade, executeBankTrade, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, countHeldDevCards, getStealTargets, stealFrom } from '../game/rules';
 import { getHexCorners } from '../game/board';
 import Board from './Board';
 import PlayerHand from './PlayerHand';
@@ -34,6 +34,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
   const [diceRolling, setDiceRolling] = useState(false);
   const [robberMode, setRobberMode] = useState(false);
   const [stealTargets, setStealTargets] = useState<PlayerColor[]>([]);
+  const [pendingSteal, setPendingSteal] = useState<{ q: number; r: number } | null>(null);
   const [showPanel, setShowPanel] = useState<'actions' | 'hand' | 'log' | null>(null);
   const [diceFlash, setDiceFlash] = useState<{ total: number; faces: [number, number] } | null>(null);
   const [debug, setDebug] = useState(() => new URLSearchParams(window.location.search).get('debug') === '1');
@@ -174,18 +175,19 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
       const result = moveRobber(gameState, q, r);
       if (result === null) {
         setRobberMode(false);
-        if (stealTargets.length > 0) {
-          const target = stealTargets[0];
-          moveRobber(gameState, q, r, target);
-          addLog(`Robber moved, stole from ${target}`);
+        // Compute steal targets from the NEW hex (where the robber now sits).
+        const targets = getStealTargets(gameState, q, r);
+        if (targets.length > 0) {
+          setPendingSteal({ q, r });
+          setStealTargets(targets);
         } else {
           addLog('Robber moved');
+          setGameState({ ...gameState });
         }
-        setGameState({ ...gameState });
       }
       return;
     }
-  }, [gameState, robberMode, stealTargets, addLog]);
+  }, [gameState, robberMode, addLog]);
 
   const handleIntersectionClick = useCallback((key: string) => {
     if (!gameState) return;
@@ -414,6 +416,17 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     }
   }, [gameState, addLog]);
 
+  const handleSteal = useCallback((target: PlayerColor) => {
+    if (!gameState || !pendingSteal) return;
+    const err = stealFrom(gameState, target);
+    if (err === null) {
+      addLog(`Robber stole from ${getPlayerByColor(gameState, target)?.name}`);
+    }
+    setPendingSteal(null);
+    setStealTargets([]);
+    setGameState({ ...gameState });
+  }, [gameState, pendingSteal, addLog]);
+
   // Record result once when the game ends
   useEffect(() => {
     if (!gameState || !gameState.winner || statsRecordedRef.current) return;
@@ -564,6 +577,28 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           )}
           onDiscard={handleDiscard}
         />
+      )}
+
+      {/* Steal target picker after moving the robber */}
+      {pendingSteal && stealTargets.length > 0 && (
+        <div style={styles.stealOverlay}>
+          <div style={styles.stealCard}>
+            <div style={styles.stealTitle}>🦹 Choose who to steal from</div>
+            {stealTargets.map(color => {
+              const p = getPlayerByColor(gameState, color);
+              return (
+                <button
+                  key={color}
+                  style={{ ...styles.stealBtn, borderColor: color }}
+                  onClick={() => handleSteal(color)}
+                >
+                  <span style={{ ...styles.stealDot, backgroundColor: color }} />
+                  {p?.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       )}
 
       {/* Incoming domestic trade offers (from AI) */}
@@ -880,6 +915,22 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'center', color: '#ffd700', fontSize: 13, fontWeight: 'bold',
     padding: '8px 12px', background: 'rgba(0,0,0,0.55)',
   },
+  stealOverlay: {
+    position: 'fixed', inset: 0, zIndex: 50,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    background: 'rgba(0,0,0,0.6)',
+  },
+  stealCard: {
+    background: '#16213e', borderRadius: 12, padding: 20, width: '100%', maxWidth: 320,
+    display: 'flex', flexDirection: 'column', gap: 10,
+  },
+  stealTitle: { color: '#ffd700', fontSize: 15, fontWeight: 'bold', textAlign: 'center', marginBottom: 4 },
+  stealBtn: {
+    display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px',
+    border: '2px solid', borderRadius: 8, background: '#1a1a2e', color: '#e0e0e0',
+    fontSize: 15, fontWeight: 'bold', cursor: 'pointer',
+  },
+  stealDot: { width: 14, height: 14, borderRadius: '50%', flexShrink: 0 },
   tabBar: {
     display: 'flex', background: '#0f3460', borderTop: '1px solid #1a1a2e', flexShrink: 0,
   },

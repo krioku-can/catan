@@ -26,6 +26,7 @@ interface SocketContextType {
   playerId: string | null;
   gameState: GameState | null;
   chatMessages: ChatMessage[];
+  lastActionResult: { action: string; result: any } | null;
   createRoom: (name: string) => void;
   joinRoom: (roomCode: string, name: string) => void;
   toggleReady: () => void;
@@ -52,6 +53,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [lastActionResult, setLastActionResult] = useState<{ action: string; result: any } | null>(null);
 
   useEffect(() => {
     const s = io(SERVER_URL, {
@@ -69,8 +71,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       setGameState(gs);
     });
 
-    s.on('game_update', ({ gameState: gs }: { gameState: GameState }) => {
+    s.on('game_update', ({ gameState: gs, action, result }: { gameState: GameState; action?: string; result?: any }) => {
       setGameState({ ...gs });
+      if (action !== undefined) setLastActionResult({ action, result });
     });
 
     s.on('chat_message', (msg: ChatMessage) => {
@@ -131,7 +134,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
   return (
     <SocketContext.Provider value={{
-      socket, connected, room, playerId, gameState, chatMessages,
+      socket, connected, room, playerId, gameState, chatMessages, lastActionResult,
       createRoom, joinRoom, toggleReady, addAI, removeAI, startGame,
       sendAction, sendChat, leaveRoom,
     }}>

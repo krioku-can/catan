@@ -4,7 +4,7 @@ import cors from 'cors';
 import { Server } from 'socket.io';
 import { v4 as uuidv4 } from 'uuid';
 import type { GameState, GameConfig, PlayerColor, ResourceType } from './game/types.js';
-import { createInitialState, getCurrentPlayer, getPlayerByColor, rollDice, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, executeBankTrade, normalizePlayerDevCards, countHeldDevCards } from './game/rules.js';
+import { createInitialState, getCurrentPlayer, getPlayerByColor, rollDice, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, executeBankTrade, normalizePlayerDevCards, countHeldDevCards, getStealTargets, stealFrom } from './game/rules.js';
 import { getHexCorners, getPortRate } from './game/board.js';
 
 const PORT = parseInt(process.env.PORT || '3001');
@@ -317,7 +317,15 @@ io.on('connection', (socket) => {
         break;
       }
       case 'move_robber': {
-        const err = moveRobber(gs, data.q, data.r, data.stealFrom);
+        const err = moveRobber(gs, data.q, data.r);
+        if (err) return;
+        // Return legal steal targets from the NEW hex so the client can pick.
+        const targets = getStealTargets(gs, data.q, data.r);
+        result = { success: true, stealTargets: targets };
+        break;
+      }
+      case 'steal': {
+        const err = stealFrom(gs, data.target);
         if (err) return;
         result = { success: true };
         break;
@@ -578,7 +586,9 @@ function runAITurn(room: Room) {
     case 'buy_dev_card':
     case 'end_turn':
     case 'accept_trade':
-    case 'reject_trade': {
+    case 'reject_trade':
+    case 'move_robber': {
+      // aiTurn already applied the robber move + steal; just sync the room.
       emitGameToRoom(room, action.action, { success: true });
       break;
     }
