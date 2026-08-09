@@ -311,24 +311,25 @@ function drawOfficialHarbor(
   ctx: CanvasRenderingContext2D,
   ax: number, ay: number,
   bx: number, by: number,
-  waterX: number, waterY: number,
+  centerX: number, centerY: number,
   size: number,
   portType: string,
 ) {
   const edgeMx = (ax + bx) / 2;
   const edgeMy = (ay + by) / 2;
 
-  // Direction from coast into water (authoritative — water hex center)
-  let ox = waterX - edgeMx;
-  let oy = waterY - edgeMy;
+  // Direction from board center outward through the edge midpoint — always
+  // points into the water ring for any coastal edge.
+  let ox = edgeMx - centerX;
+  let oy = edgeMy - centerY;
   const olen = Math.hypot(ox, oy) || 1;
   ox /= olen;
   oy /= olen;
 
-  // Plaque sits ON the water hex itself — guaranteed off the land faces.
-  // Blend heavily toward the water hex center so it never rides the coast.
-  const px = edgeMx * 0.1 + waterX * 0.9;
-  const py = edgeMy * 0.1 + waterY * 0.9;
+  // Plaque sits in the water, pushed well past the coast.
+  const pierLen = size * 1.15;
+  const px = edgeMx + ox * pierLen;
+  const py = edgeMy + oy * pierLen;
 
   const isGeneric = portType === '3:1';
   let ratio = '3:1';
@@ -412,16 +413,6 @@ function roundRect(
   ctx.arcTo(x, y, x + w, y, rr);
   ctx.closePath();
 }
-
-// Pointy-top neighbor across edge `dir` (matches PORT_LAYOUT / getPortIntersections).
-const EDGE_NEIGHBOR: [number, number][] = [
-  [1, 0],
-  [1, -1],
-  [0, -1],
-  [-1, 0],
-  [-1, 1],
-  [0, 1],
-];
 
 function buildIntersectionPositions(
   board: { q: number; r: number }[],
@@ -562,13 +553,10 @@ export default function Board({
         const bx = pb.x + boardCx;
         const by = pb.y + boardCy;
 
-        // Water hex center across this coastal edge — plaque sits seaward of the edge.
-        const [dq, dr] = EDGE_NEIGHBOR[port.direction] || [0, 0];
-        const water = hexToPixel(port.q + dq, port.r + dr, hexSize);
-        const wx = water.x + boardCx;
-        const wy = water.y + boardCy;
-
-        drawOfficialHarbor(ctx, ax, ay, bx, by, wx, wy, hexSize, port.type);
+        // Plaque is placed by pushing the edge midpoint OUTWARD from the board
+        // center — this always lands in the water ring, regardless of which
+        // hex the edge faces (some coastal edges face land, not water).
+        drawOfficialHarbor(ctx, ax, ay, bx, by, boardCx, boardCy, hexSize, port.type);
       });
     }
 
