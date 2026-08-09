@@ -33,6 +33,7 @@ interface BoardProps {
   onEdgeClick: (key: string) => void;
   robberMode: boolean;
   selectedAction: string | null;
+  debug?: boolean;
 }
 
 function hexCorners(cx: number, cy: number, size: number) {
@@ -451,6 +452,7 @@ export default function Board({
   onEdgeClick,
   robberMode,
   selectedAction,
+  debug = false,
 }: BoardProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -616,7 +618,74 @@ export default function Board({
         drawNumberToken(ctx, cx, cy + hexSize * 0.02, hexSize, tile.number);
       }
     });
-  }, [gameState, hexSize, CANVAS_W, CANVAS_H, selectedAction, assetsReady]);
+
+    // --- DEBUG BOARD MODE: overlay the underlying graph model ---
+    if (debug) {
+      ctx.save();
+      ctx.font = `bold ${Math.max(9, hexSize * 0.16)}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      // Edge IDs (midpoint of each edge)
+      Object.values(gameState.edges).forEach((edge: Edge) => {
+        const a = positions.get(edge.from);
+        const b = positions.get(edge.to);
+        if (!a || !b) return;
+        const mx = (a.x + b.x) / 2 + W / 2;
+        const my = (a.y + b.y) / 2 + H / 2;
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.fillRect(mx - 14, my - 7, 28, 14);
+        ctx.fillStyle = '#ffd54f';
+        ctx.fillText(edge.key, mx, my);
+      });
+
+      // Intersection dots + IDs
+      Object.values(gameState.intersections).forEach((inter: Intersection) => {
+        const pos = positions.get(inter.key);
+        if (!pos) return;
+        const cx = pos.x + W / 2;
+        const cy = pos.y + H / 2;
+        ctx.beginPath();
+        ctx.arc(cx, cy, Math.max(3, hexSize * 0.05), 0, Math.PI * 2);
+        ctx.fillStyle = '#00e5ff';
+        ctx.fill();
+        ctx.strokeStyle = '#004d40';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = '#00e5ff';
+        ctx.fillText(inter.key, cx, cy - hexSize * 0.22);
+      });
+
+      // Hex IDs + axial coords
+      gameState.board.forEach(tile => {
+        const { x, y } = hexToPixel(tile.q, tile.r, hexSize);
+        const cx = x + W / 2;
+        const cy = y + H / 2;
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillRect(cx - 30, cy - 16, 60, 32);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(`${tile.q},${tile.r}`, cx, cy - 4);
+        ctx.fillStyle = '#ff8a65';
+        ctx.fillText(tile.type, cx, cy + 12);
+      });
+
+      // Harbor IDs
+      gameState.ports.forEach(port => {
+        const [ikA, ikB] = getPortIntersections(port);
+        const pa = positions.get(ikA);
+        const pb = positions.get(ikB);
+        if (!pa || !pb) return;
+        const mx = (pa.x + pb.x) / 2 + W / 2;
+        const my = (pa.y + pb.y) / 2 + H / 2;
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillRect(mx - 20, my - 8, 40, 16);
+        ctx.fillStyle = '#ffd54f';
+        ctx.fillText(port.type, mx, my);
+      });
+
+      ctx.restore();
+    }
+  }, [gameState, hexSize, CANVAS_W, CANVAS_H, selectedAction, assetsReady, debug]);
 
   const screenToCanvas = useCallback((screenX: number, screenY: number) => {
     const container = containerRef.current;

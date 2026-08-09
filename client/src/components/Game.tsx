@@ -36,6 +36,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
   const [stealTargets, setStealTargets] = useState<PlayerColor[]>([]);
   const [showPanel, setShowPanel] = useState<'actions' | 'hand' | 'log' | null>(null);
   const [diceFlash, setDiceFlash] = useState<{ total: number; faces: [number, number] } | null>(null);
+  const [debug, setDebug] = useState(() => new URLSearchParams(window.location.search).get('debug') === '1');
   const [turnOrderRolls, setTurnOrderRolls] = useState<Record<string, number> | null>(null);
   const startedRef = useRef(false);
   const statsRecordedRef = useRef(false);
@@ -512,6 +513,12 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           {gameState.dice && (
             <span style={styles.diceResult}>🎲 {gameState.dice[0]}+{gameState.dice[1]}</span>
           )}
+          <button
+            style={{ ...styles.leaveBtn, background: debug ? '#2e7d32' : '#333' }}
+            onClick={() => setDebug(d => !d)}
+            title="Toggle debug board overlay"
+            type="button"
+          >🔍</button>
           {onExit && (
             <button style={styles.leaveBtn} onClick={onExit} type="button">✕</button>
           )}
@@ -527,6 +534,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           onEdgeClick={handleEdgeClick}
           robberMode={robberMode}
           selectedAction={selectedAction}
+          debug={debug}
         />
         <DiceFlash
           total={diceFlash?.total ?? null}

@@ -22,6 +22,7 @@ export default function OnlineGame() {
   const [chatInput, setChatInput] = useState('');
   const [showPanel, setShowPanel] = useState<'actions' | 'hand' | 'chat' | null>(null);
   const [diceFlash, setDiceFlash] = useState<{ total: number; faces: [number, number] } | null>(null);
+  const [debug, setDebug] = useState(() => new URLSearchParams(window.location.search).get('debug') === '1');
 
   // Flash the rolled number whenever the server syncs a new dice result.
   useEffect(() => {
@@ -147,6 +148,11 @@ export default function OnlineGame() {
           {gameState.dice && (
             <span style={styles.diceResult}>🎲 {gameState.dice[0]}+{gameState.dice[1]}</span>
           )}
+          <button
+            style={{ ...styles.leaveBtn, background: debug ? '#2e7d32' : '#333' }}
+            onClick={() => setDebug(d => !d)}
+            title="Toggle debug board overlay"
+          >🔍</button>
           <button style={styles.leaveBtn} onClick={leaveRoom}>✕</button>
         </div>
       </div>
@@ -161,6 +167,7 @@ export default function OnlineGame() {
           onEdgeClick={handleEdgeClick}
           robberMode={robberMode}
           selectedAction={selectedAction}
+          debug={debug}
         />
         <DiceFlash
           total={diceFlash?.total ?? null}

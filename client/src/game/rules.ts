@@ -632,7 +632,7 @@ export function advanceSetup(state: GameState): void {
 }
 
 // Calculate longest road for a player
-function calculateLongestRoad(player: PlayerColor, edges: Record<string, Edge>): number {
+export function calculateLongestRoad(player: PlayerColor, edges: Record<string, Edge>): number {
   // BFS from each road endpoint
   const playerEdges = Object.values(edges).filter(e => e.road === player);
   if (playerEdges.length < 5) return 0;

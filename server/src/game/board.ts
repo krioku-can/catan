@@ -239,12 +239,18 @@ export function generateBoard(): { tiles: HexTile[]; ports: Port[]; intersection
   }
 
   // 4. Build ports
-  const ports: Port[] = PORT_LAYOUT.map(p => ({
-    q: p.q,
-    r: p.r,
-    direction: p.dir,
-    type: p.type,
-  }));
+  const ports: Port[] = PORT_LAYOUT.map(p => {
+    const [ikA, ikB] = getPortIntersections({ q: p.q, r: p.r, direction: p.dir });
+    const coastalEdge = [ikA, ikB].sort().join('~');
+    return {
+      q: p.q,
+      r: p.r,
+      direction: p.dir,
+      type: p.type,
+      coastalEdge,
+      coastalIntersections: [ikA, ikB],
+    };
+  });
 
   // 5. Build all intersections and edges
   const intersections: Record<string, Intersection> = {};

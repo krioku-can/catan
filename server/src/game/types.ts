@@ -23,6 +23,10 @@ export interface Port {
   r: number;
   direction: number; // 0-5, which edge of the hex
   type: '3:1' | '2:1:brick' | '2:1:lumber' | '2:1:wool' | '2:1:grain' | '2:1:ore';
+  /** The coastal edge key this harbor sits on (canonical "a~b"). */
+  coastalEdge: string;
+  /** The two coastal intersection keys that grant harbor access. */
+  coastalIntersections: string[];
 }
 
 export interface Intersection {
