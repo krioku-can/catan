@@ -105,7 +105,10 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     const t = setTimeout(() => {
       const action = aiTurn(gameState);
       if (!action) {
-        setGameState({ ...gameState });
+        // AI is waiting (e.g. not in the discard queue, or no legal move).
+        // Do NOT setGameState here — that creates a new object reference and
+        // re-triggers this effect, causing an infinite loop. The effect will
+        // re-run when gameState changes externally (e.g. the human discards).
         return;
       }
       switch (action.action) {
