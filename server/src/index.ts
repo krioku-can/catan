@@ -280,23 +280,7 @@ io.on('connection', (socket) => {
         // trade phase and advances to build via the 'skip_trade' action.
         if (d1 + d2 === 7) {
           // Auto-discard for AI players who have >7 cards.
-          for (const ai of gs.players) {
-            if (!ai.isAI) continue;
-            if (!gs.discardQueue.includes(ai.color)) continue;
-            const total = (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
-              .reduce((s, r) => s + (ai.resources[r] || 0), 0);
-            const mustDiscard = Math.floor(total / 2);
-            const toDiscard: Partial<Record<ResourceType, number>> = {};
-            let remaining = mustDiscard;
-            const sorted = (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
-              .sort((a, b) => (ai.resources[b] || 0) - (ai.resources[a] || 0));
-            for (const r of sorted) {
-              if (remaining <= 0) break;
-              const take = Math.min(ai.resources[r] || 0, remaining);
-              if (take > 0) { toDiscard[r] = take; remaining -= take; }
-            }
-            discardResources(gs, ai.color, toDiscard);
-          }
+          autoDiscardAIs(gs);
           // Find steal targets
           const [rq, rr] = gs.robberHex.split(',').map(Number);
           const targets: PlayerColor[] = [];
@@ -552,6 +536,32 @@ io.on('connection', (socket) => {
   });
 });
 
+// ── AI helpers ──
+/** After a 7, every AI with >7 cards must discard half. Drain them all so the
+ *  discard queue never stalls waiting on an AI that isn't the current player. */
+function autoDiscardAIs(gs: NonNullable<Room['gameState']>) {
+  let guard = 0;
+  while (gs.phase === 'discard' && guard++ < 10) {
+    const aiInQueue = gs.players.find(
+      p => p.isAI && gs.discardQueue.includes(p.color)
+    );
+    if (!aiInQueue) break;
+    const total = (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
+      .reduce((s, r) => s + (aiInQueue.resources[r] || 0), 0);
+    const mustDiscard = Math.floor(total / 2);
+    const toDiscard: Partial<Record<ResourceType, number>> = {};
+    let remaining = mustDiscard;
+    const sorted = (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
+      .sort((a, b) => (aiInQueue.resources[b] || 0) - (aiInQueue.resources[a] || 0));
+    for (const r of sorted) {
+      if (remaining <= 0) break;
+      const take = Math.min(aiInQueue.resources[r] || 0, remaining);
+      if (take > 0) { toDiscard[r] = take; remaining -= take; }
+    }
+    discardResources(gs, aiInQueue.color, toDiscard);
+  }
+}
+
 // ── AI Turn Runner ──
 function runAITurn(room: Room) {
   if (!room.gameState) return;
@@ -562,6 +572,11 @@ function runAITurn(room: Room) {
   switch (action.action) {
     case 'roll_dice': {
       const [d1, d2] = rollDice(gs);
+      if (d1 + d2 === 7) {
+        // Same as human roll path: drain every AI discard so the queue
+        // doesn't freeze with multiple AIs waiting.
+        autoDiscardAIs(gs);
+      }
       emitGameToRoom(room, 'roll_dice', { dice: [d1, d2], total: d1 + d2 });
       break;
     }
@@ -576,7 +591,9 @@ function runAITurn(room: Room) {
       break;
     }
     case 'discard': {
-      // aiTurn already applied the discard; just sync the room
+      // aiTurn already applied the current AI's discard. Drain any other AIs
+      // still in the queue (multi-AI 7), matching the local Game.tsx fix.
+      autoDiscardAIs(gs);
       emitGameToRoom(room, 'discard', { success: true });
       break;
     }
