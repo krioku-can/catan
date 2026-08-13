@@ -25,23 +25,24 @@ function totalRes(p) {
   return ['brick','lumber','wool','grain','ore'].reduce((s,r)=>s+(p.resources[r]||0),0);
 }
 
-// Auto-discard for AI (mirrors the server's roll_dice handler).
+// Auto-discard for AI (mirrors server autoDiscardAIs — drain full queue).
 function autoDiscardAI(state) {
-  for (const ai of state.players) {
-    if (!ai.isAI) continue;
-    if (!state.discardQueue.includes(ai.color)) continue;
-    const must = Math.floor(totalRes(ai)/2);
+  let guard = 0;
+  while (state.phase === 'discard' && guard++ < 10) {
+    const ai = state.players.find(p => p.isAI && state.discardQueue.includes(p.color));
+    if (!ai) break;
+    const must = Math.floor(totalRes(ai) / 2);
     const toDiscard = {};
     let remaining = must;
-    const sorted = ['brick','lumber','wool','grain','ore']
-      .sort((a,b)=>(ai.resources[b]||0)-(ai.resources[a]||0));
+    const sorted = ['brick', 'lumber', 'wool', 'grain', 'ore']
+      .sort((a, b) => (ai.resources[b] || 0) - (ai.resources[a] || 0));
     for (const r of sorted) {
-      if (remaining<=0) break;
-      const take = Math.min(ai.resources[r]||0, remaining);
-      if (take>0){ toDiscard[r]=take; remaining-=take; }
+      if (remaining <= 0) break;
+      const take = Math.min(ai.resources[r] || 0, remaining);
+      if (take > 0) { toDiscard[r] = take; remaining -= take; }
     }
     const err = R.discardResources(state, ai.color, toDiscard);
-    if (err) { illegalMoves++; console.log(`  [BUG] AI discard failed: ${err}`); }
+    if (err) { illegalMoves++; console.log(`  [BUG] AI discard failed: ${err}`); break; }
   }
 }
 
@@ -54,7 +55,10 @@ function applyAction(state, action) {
       break;
     }
     case 'skip_trade': state.phase = 'build'; break;
-    case 'discard': break; // already applied inside aiTurn
+    case 'discard':
+      // aiTurn already discarded the current AI; drain any other AIs still queued
+      autoDiscardAI(state);
+      break;
     case 'place_settlement':
       if (state.setupPhase) {
         const e = R.placeSetupSettlement(state, action.data.key);
@@ -153,4 +157,51 @@ if (stallLog.length) {
   console.log('Stall details:');
   stallLog.forEach(s=>console.log(`  - ${s}`));
 }
+
+// ── Regression: multi-AI discard after a 7 must fully drain ──
+console.log('\n=== multi-AI discard regression ===');
+(function multiAiDiscardRegression() {
+  const config = {
+    numPlayers: 4,
+    playerNames: ['P1', 'P2', 'P3', 'P4'],
+    aiPlayers: [0, 1, 2, 3],
+  };
+  const state = R.createInitialState(config);
+  // Force out of setup into a normal roll phase
+  state.setupPhase = false;
+  state.phase = 'roll';
+  state.setupRound = 99;
+  // Stuff every hand above 7
+  for (const p of state.players) {
+    p.resources = { brick: 3, lumber: 3, wool: 2, grain: 2, ore: 2 }; // 12 each
+  }
+  // Roll until we get a 7 (or force via rollDice many times)
+  let got7 = false;
+  for (let i = 0; i < 80 && !got7; i++) {
+    state.phase = 'roll';
+    state.dice = null;
+    const [d1, d2] = R.rollDice(state);
+    if (d1 + d2 === 7) {
+      got7 = true;
+      autoDiscardAI(state);
+    }
+  }
+  if (!got7) {
+    // Force discard queue as if a 7 happened
+    state.discardQueue = state.players.map(p => p.color);
+    state.phase = 'discard';
+    autoDiscardAI(state);
+  }
+  const remainingAI = state.discardQueue.filter(c => {
+    const p = state.players.find(x => x.color === c);
+    return p && p.isAI;
+  });
+  if (remainingAI.length > 0 || state.phase === 'discard' && state.discardQueue.some(c => state.players.find(p => p.color === c)?.isAI)) {
+    console.log('  ✗ FAIL — AIs still in discard queue:', remainingAI);
+    illegalMoves++;
+  } else {
+    console.log('  ✓ multi-AI discard queue drained (phase=' + state.phase + ', queue=' + state.discardQueue.length + ')');
+  }
+})();
+
 process.exit(stalls>0 || illegalMoves>0 ? 1 : 0);

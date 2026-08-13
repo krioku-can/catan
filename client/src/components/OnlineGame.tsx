@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useSocket } from '../hooks/useSocket';
 import { getCurrentPlayer } from '../game/rules';
 import type { ResourceType, PlayerColor } from '../game/types';
@@ -12,6 +12,9 @@ import BuildMenu from './BuildMenu';
 import DiscardModal from './DiscardModal';
 import DevCardPanel from './DevCardPanel';
 import TradeOffers from './TradeOffers';
+import TurnCoach from './TurnCoach';
+import { unlockAudio, sfx, isMuted, setMuted } from '../audio';
+import { getTurnCoach } from '../turnCoach';
 
 const HEX_SIZE = 68;
 
@@ -25,30 +28,54 @@ export default function OnlineGame() {
   const [showPanel, setShowPanel] = useState<'actions' | 'hand' | 'chat' | null>(null);
   const [diceFlash, setDiceFlash] = useState<{ total: number; faces: [number, number] } | null>(null);
   const [debug, setDebug] = useState(() => new URLSearchParams(window.location.search).get('debug') === '1');
+  const [muted, setMutedState] = useState(() => isMuted());
+  const lastTurnColorRef = useRef<string | null>(null);
+  const lastDiceKeyRef = useRef<string>('');
+
+  useEffect(() => {
+    const unlock = () => unlockAudio();
+    window.addEventListener('pointerdown', unlock, { once: true });
+    return () => window.removeEventListener('pointerdown', unlock);
+  }, []);
 
   // Flash the rolled number whenever the server syncs a new dice result.
   useEffect(() => {
     if (gameState?.dice) {
+      const key = `${gameState.dice[0]}-${gameState.dice[1]}-${gameState.currentTurn}-${gameState.round}`;
+      if (key !== lastDiceKeyRef.current) {
+        lastDiceKeyRef.current = key;
+        sfx.dice();
+        if (gameState.dice[0] + gameState.dice[1] === 7) sfx.robber();
+      }
       setDiceFlash({ total: gameState.dice[0] + gameState.dice[1], faces: [gameState.dice[0], gameState.dice[1]] });
     }
-  }, [gameState?.dice?.[0], gameState?.dice?.[1]]);
+  }, [gameState?.dice?.[0], gameState?.dice?.[1], gameState?.currentTurn, gameState?.round]);
+
+  useEffect(() => {
+    if (!gameState) return;
+    const cur = getCurrentPlayer(gameState);
+    const prev = lastTurnColorRef.current;
+    lastTurnColorRef.current = cur.color;
+    const myColor = room?.players.find(rp => rp.playerId === playerId)?.color;
+    if (prev && prev !== cur.color && myColor && cur.color === myColor) sfx.yourTurn();
+  }, [gameState?.currentTurn, gameState?.phase, room, playerId]);
+
+  useEffect(() => {
+    if (gameState?.winner) sfx.win();
+  }, [gameState?.winner]);
 
   // When the server confirms a robber move, surface the steal-target picker.
   useEffect(() => {
     if (lastActionResult?.action === 'move_robber' && lastActionResult.result?.stealTargets?.length) {
+      sfx.robber();
       setStealTargets(lastActionResult.result.stealTargets);
       setPendingSteal({ q: 0, r: 0 }); // robber already moved; steal uses current robberHex
     }
+    if (lastActionResult?.action === 'steal') sfx.steal();
+    if (lastActionResult?.action === 'discard') sfx.discard();
+    if (lastActionResult?.action === 'place_settlement' || lastActionResult?.action === 'place_city') sfx.build();
+    if (lastActionResult?.action === 'place_road') sfx.road();
   }, [lastActionResult]);
-
-  if (!gameState || !room) return null;
-
-  const myPlayer = gameState.players.find(p => {
-    const conn = room.players.find(rp => rp.playerId === playerId);
-    return conn && p.color === conn.color;
-  });
-  const player = getCurrentPlayer(gameState);
-  const isMyTurn = myPlayer?.color === player.color;
 
   const handleHexClick = useCallback((q: number, r: number) => {
     if (!robberMode) return;
@@ -148,6 +175,14 @@ export default function OnlineGame() {
     }
   }, [chatInput, sendChat]);
 
+  if (!gameState || !room) return null;
+
+  const myPlayer = gameState.players.find(p => {
+    const conn = room.players.find(rp => rp.playerId === playerId);
+    return conn && p.color === conn.color;
+  });
+  const player = getCurrentPlayer(gameState);
+  const isMyTurn = myPlayer?.color === player.color;
   return (
     <div style={styles.container}>
       {/* Top bar */}
@@ -167,13 +202,34 @@ export default function OnlineGame() {
             <span style={styles.diceResult}>🎲 {gameState.dice[0]}+{gameState.dice[1]}</span>
           )}
           <button
+            style={{ ...styles.leaveBtn, background: muted ? '#555' : '#333' }}
+            onClick={() => {
+              const next = !muted;
+              setMuted(next);
+              setMutedState(next);
+              if (!next) unlockAudio();
+            }}
+            title={muted ? 'Unmute' : 'Mute'}
+            type="button"
+          >{muted ? '🔇' : '🔊'}</button>
+          <button
             style={{ ...styles.leaveBtn, background: debug ? '#2e7d32' : '#333' }}
             onClick={() => setDebug(d => !d)}
             title="Toggle debug board overlay"
+            type="button"
           >🔍</button>
-          <button style={styles.leaveBtn} onClick={leaveRoom}>✕</button>
+          <button style={styles.leaveBtn} onClick={leaveRoom} type="button">✕</button>
         </div>
       </div>
+
+      <TurnCoach
+        text={getTurnCoach(gameState, myPlayer, {
+          robberMode,
+          pendingSteal: !!(pendingSteal && stealTargets.length > 0),
+          selectedAction,
+        })}
+        highlight={isMyTurn && !gameState.winner}
+      />
 
       {/* Board — fills remaining space; menus overlay instead of shrinking it */}
       <div className="board-stage" style={styles.boardArea}>
@@ -392,6 +448,7 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: '8px 12px',
+    paddingTop: 'max(8px, env(safe-area-inset-top, 0px))',
     background: '#0f3460',
     zIndex: 10,
     flexShrink: 0,

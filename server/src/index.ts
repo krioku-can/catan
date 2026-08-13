@@ -102,7 +102,10 @@ const io = new Server(server, {
   cors: { origin: CORS_ORIGIN, methods: ['GET', 'POST'] },
 });
 
-// Health check
+// Health check (root + /api/health — Render free tier wake pings)
+app.get('/', (_req, res) => {
+  res.json({ status: 'ok', service: 'catan-server', rooms: rooms.size });
+});
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', rooms: rooms.size });
 });
@@ -159,7 +162,7 @@ io.on('connection', (socket) => {
       return;
     }
     if (room.gameState) {
-      callback({ error: 'Game already in progress' });
+      callback({ error: 'Game already in progress — ask host to restart, or rejoin if you were already in' });
       return;
     }
     if (room.players.length >= 4) {
@@ -178,12 +181,74 @@ io.on('connection', (socket) => {
       ready: false,
     });
 
-    socketToRoom.set(socket.id, roomCode);
-    socket.join(roomCode);
+    socketToRoom.set(socket.id, roomCode.toUpperCase());
+    socket.join(roomCode.toUpperCase());
 
     console.log(`[room] ${name} joined ${roomCode}`);
     callback({ playerId, color });
-    io.to(roomCode).emit('room_update', serializeRoom(room));
+    io.to(roomCode.toUpperCase()).emit('room_update', serializeRoom(room));
+  });
+
+  // ── Rejoin after refresh / brief disconnect ──
+  socket.on('rejoin_room', (
+    { roomCode, playerId, name }: { roomCode: string; playerId: string; name?: string },
+    callback: (res: { ok?: boolean; playerId?: string; error?: string; inGame?: boolean }) => void,
+  ) => {
+    const code = (roomCode || '').toUpperCase();
+    const room = rooms.get(code);
+    if (!room) {
+      callback({ error: 'Room not found' });
+      return;
+    }
+    const player = room.players.find(p => p.playerId === playerId && !p.isAI);
+    if (!player) {
+      callback({ error: 'Seat not found' });
+      return;
+    }
+    // Drop any stale socket mapping for this seat
+    if (player.socketId && player.socketId !== socket.id) {
+      socketToRoom.delete(player.socketId);
+    }
+    player.socketId = socket.id;
+    if (name) player.name = name;
+    socketToRoom.set(socket.id, code);
+    socket.join(code);
+    console.log(`[room] ${player.name} rejoined ${code}`);
+    callback({ ok: true, playerId: player.playerId, inGame: !!room.gameState });
+    io.to(code).emit('room_update', serializeRoom(room));
+    if (room.gameState) {
+      const payload = {
+        gameState: sanitizeGameStateForPlayer(room.gameState, player.color),
+      };
+      socket.emit('game_started', payload);
+      // Also push as update so OnlineGame stays mounted
+      socket.emit('game_update', { gameState: payload.gameState });
+    }
+  });
+
+  // ── Leave Room (explicit) ──
+  socket.on('leave_room', () => {
+    const roomCode = socketToRoom.get(socket.id);
+    if (!roomCode) return;
+    const room = rooms.get(roomCode);
+    if (!room) return;
+    const idx = room.players.findIndex(p => p.socketId === socket.id);
+    if (idx >= 0) {
+      const leaving = room.players[idx];
+      room.players.splice(idx, 1);
+      if (room.hostId === leaving.playerId) {
+        const newHost = room.players.find(p => !p.isAI);
+        if (newHost) room.hostId = newHost.playerId;
+      }
+    }
+    socket.leave(roomCode);
+    socketToRoom.delete(socket.id);
+    if (room.players.filter(p => !p.isAI).length === 0) {
+      rooms.delete(roomCode);
+      console.log(`[room] Deleted ${roomCode} (no humans left)`);
+    } else {
+      io.to(roomCode).emit('room_update', serializeRoom(room));
+    }
   });
 
   // ── Toggle Ready ──
@@ -512,22 +577,39 @@ io.on('connection', (socket) => {
     const roomCode = socketToRoom.get(socket.id);
     if (!roomCode) return;
     const room = rooms.get(roomCode);
-    if (!room) return;
-
-    const idx = room.players.findIndex(p => p.socketId === socket.id);
-    if (idx >= 0) {
-      room.players.splice(idx, 1);
+    if (!room) {
+      socketToRoom.delete(socket.id);
+      return;
     }
 
-    if (room.players.length === 0) {
+    const player = room.players.find(p => p.socketId === socket.id);
+    if (!player) {
+      socketToRoom.delete(socket.id);
+      return;
+    }
+
+    // In an active game, keep the seat so the player can rejoin (don't kick mid-game).
+    if (room.gameState) {
+      player.socketId = '';
+      socketToRoom.delete(socket.id);
+      io.to(roomCode).emit('room_update', serializeRoom(room));
+      console.log(`[disconnect] ${player.name} parked in ${roomCode} (in-game)`);
+      return;
+    }
+
+    // Lobby: remove the player
+    const idx = room.players.indexOf(player);
+    if (idx >= 0) room.players.splice(idx, 1);
+
+    if (room.hostId === player.playerId) {
+      const newHost = room.players.find(p => !p.isAI);
+      if (newHost) room.hostId = newHost.playerId;
+    }
+
+    if (room.players.filter(p => !p.isAI).length === 0) {
       rooms.delete(roomCode);
-      console.log(`[room] Deleted ${roomCode} (empty)`);
+      console.log(`[room] Deleted ${roomCode} (empty lobby)`);
     } else {
-      // Transfer host
-      if (room.hostId === room.players.find(p => p.socketId === socket.id)?.playerId) {
-        const newHost = room.players.find(p => !p.isAI);
-        if (newHost) room.hostId = newHost.playerId;
-      }
       io.to(roomCode).emit('room_update', serializeRoom(room));
     }
 
@@ -643,6 +725,7 @@ function serializeRoom(room: Room) {
       color: p.color,
       isAI: p.isAI,
       ready: p.ready,
+      connected: p.isAI ? true : !!p.socketId,
     })),
     hostId: room.hostId,
     inGame: room.gameState !== null,

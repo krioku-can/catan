@@ -16,6 +16,7 @@ body,
   text-align: left;
   display: block;
   min-height: 100%;
+  min-height: 100dvh;
   box-sizing: border-box;
 }
 
@@ -33,6 +34,7 @@ body {
   position: relative;
   flex-shrink: 0;
   z-index: 30;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 /* Overlay sheet above the tab bar — board keeps full flex height */
@@ -91,9 +93,9 @@ body {
 /* Compact resource strip floats on the board edge */
 .hand-bar-float {
   position: absolute;
-  left: 8px;
-  right: 8px;
-  bottom: 8px;
+  left: max(8px, env(safe-area-inset-left, 0px));
+  right: max(8px, env(safe-area-inset-right, 0px));
+  bottom: max(8px, env(safe-area-inset-bottom, 0px));
   z-index: 8;
   border-radius: 12px;
   overflow: hidden;
@@ -109,6 +111,10 @@ body {
   display: flex;
   align-items: stretch;
   justify-content: center;
+}
+
+.turn-coach {
+  flex-shrink: 0;
 }
 
 @keyframes dicePop {

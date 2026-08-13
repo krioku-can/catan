@@ -3,7 +3,7 @@ import { useSocket } from '../hooks/useSocket';
 import { getStored, setStored } from '../storage';
 
 export default function Lobby({ onBack, initialRoomCode }: { onBack?: () => void; initialRoomCode?: string }) {
-  const { connected, room, playerId, createRoom, joinRoom, toggleReady, addAI, removeAI, startGame, leaveRoom } = useSocket();
+  const { connected, connectionMessage, room, playerId, createRoom, joinRoom, toggleReady, addAI, removeAI, startGame, leaveRoom, retryConnect } = useSocket();
   const [name, setName] = useState(() => getStored('catan_name') || '');
   const [roomCode, setRoomCode] = useState(initialRoomCode || '');
   const [showJoin, setShowJoin] = useState(false);
@@ -20,8 +20,16 @@ export default function Lobby({ onBack, initialRoomCode }: { onBack?: () => void
     return (
       <div style={styles.container}>
         <h1 style={styles.title}>🏝️ CATAN</h1>
-        <p style={styles.subtitle}>Connecting to server...</p>
+        <p style={styles.subtitle}>
+          {connectionMessage || 'Connecting to server…'}
+        </p>
         <div style={styles.spinner}>⏳</div>
+        <p style={{ color: '#8890a0', fontSize: 13, maxWidth: 320, textAlign: 'center', lineHeight: 1.4 }}>
+          First open after idle can take ~30 seconds while the free server wakes up.
+        </p>
+        <button type="button" style={styles.primaryBtn} onClick={retryConnect}>
+          Retry connection
+        </button>
         {onBack && <button type="button" style={styles.secondaryBtn} onClick={onBack}>Back</button>}
       </div>
     );

@@ -13,8 +13,11 @@ import BuildMenu from './BuildMenu';
 import GameLog from './GameLog';
 import DiscardModal from './DiscardModal';
 import DevCardPanel from './DevCardPanel';
+import TurnCoach from './TurnCoach';
 import { recordGame } from '../stats';
 import { setStored, getStored } from '../storage';
+import { unlockAudio, sfx, isMuted, setMuted } from '../audio';
+import { getTurnCoach } from '../turnCoach';
 
 const HEX_SIZE = 68;
 
@@ -39,8 +42,30 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
   const [diceFlash, setDiceFlash] = useState<{ total: number; faces: [number, number] } | null>(null);
   const [debug, setDebug] = useState(() => new URLSearchParams(window.location.search).get('debug') === '1');
   const [turnOrderRolls, setTurnOrderRolls] = useState<Record<string, number> | null>(null);
+  const [muted, setMutedState] = useState(() => isMuted());
   const startedRef = useRef(false);
   const statsRecordedRef = useRef(false);
+  const lastTurnColorRef = useRef<string | null>(null);
+
+  // Unlock Web Audio on first pointer so SFX work on mobile
+  useEffect(() => {
+    const unlock = () => unlockAudio();
+    window.addEventListener('pointerdown', unlock, { once: true });
+    return () => window.removeEventListener('pointerdown', unlock);
+  }, []);
+
+  // Your-turn chime when control passes to the human
+  useEffect(() => {
+    if (!gameState) return;
+    const cur = getCurrentPlayer(gameState);
+    const prev = lastTurnColorRef.current;
+    lastTurnColorRef.current = cur.color;
+    if (prev && prev !== cur.color && !cur.isAI) sfx.yourTurn();
+  }, [gameState?.currentTurn, gameState?.phase]);
+
+  useEffect(() => {
+    if (gameState?.winner) sfx.win();
+  }, [gameState?.winner]);
 
   // Auto-save the game to localStorage on every state change so a refresh
   // or accidental close never loses progress. Cleared when the game ends.
@@ -202,6 +227,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     if (robberMode) {
       const result = moveRobber(gameState, q, r);
       if (result === null) {
+        sfx.robber();
         setRobberMode(false);
         // Compute steal targets from the NEW hex (where the robber now sits).
         const targets = getStealTargets(gameState, q, r);
@@ -225,6 +251,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
       if (gameState.phase === 'setup_settlement') {
         const err = placeSetupSettlement(gameState, key);
         if (err === null) {
+          sfx.build();
           addLog(`${player.name} placed a settlement`);
           setGameState({ ...gameState });
           advanceSetup(gameState);
@@ -238,6 +265,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
       if (selectedAction === 'settlement') {
         const err = placeSettlement(gameState, key);
         if (err === null) {
+          sfx.build();
           addLog(`${player.name} built a settlement`);
           setSelectedAction(null);
           setGameState({ ...gameState });
@@ -245,6 +273,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
       } else if (selectedAction === 'city') {
         const err = placeCity(gameState, key);
         if (err === null) {
+          sfx.build();
           addLog(`${player.name} upgraded to a city`);
           setSelectedAction(null);
           setGameState({ ...gameState });
@@ -261,6 +290,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
       if (gameState.phase === 'setup_road') {
         const err = placeSetupRoad(gameState, key);
         if (err === null) {
+          sfx.road();
           addLog(`${player.name} placed a road`);
           setGameState({ ...gameState });
           advanceSetup(gameState);
@@ -275,6 +305,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     if (freeRoads || ((gameState.phase === 'build' || gameState.phase === 'trade') && selectedAction === 'road')) {
       const err = placeRoad(gameState, key);
       if (err === null) {
+        sfx.road();
         addLog(freeRoads
           ? `${player.name} placed a free road (${gameState.pendingDevRoads} left)`
           : `${player.name} built a road`);
@@ -310,6 +341,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     setTimeout(() => {
       const [d1, d2] = rollDice(gameState);
       const total = d1 + d2;
+      sfx.dice();
       setDiceFlash({ total, faces: [d1, d2] });
       addLog(`${getCurrentPlayer(gameState).name} rolled ${d1} + ${d2} = ${total}`);
       
@@ -319,6 +351,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
       // The AI reaches build via its internal skip_trade.
       
       if (total === 7) {
+        sfx.robber();
         addLog('7 rolled! Robber time!');
         // Auto-discard for AI players who have >7 cards.
         for (const ai of gameState.players) {
@@ -392,6 +425,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     if (!me) return;
     const err = discardResources(gameState, me.color, discard);
     if (err === null) {
+      sfx.discard();
       addLog('You discarded cards after the 7');
       setGameState({ ...gameState });
     }
@@ -555,6 +589,17 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
             <span style={styles.diceResult}>🎲 {gameState.dice[0]}+{gameState.dice[1]}</span>
           )}
           <button
+            style={{ ...styles.leaveBtn, background: muted ? '#555' : '#333' }}
+            onClick={() => {
+              const next = !muted;
+              setMuted(next);
+              setMutedState(next);
+              if (!next) unlockAudio();
+            }}
+            title={muted ? 'Unmute sounds' : 'Mute sounds'}
+            type="button"
+          >{muted ? '🔇' : '🔊'}</button>
+          <button
             style={{ ...styles.leaveBtn, background: debug ? '#2e7d32' : '#333' }}
             onClick={() => setDebug(d => !d)}
             title="Toggle debug board overlay"
@@ -565,6 +610,15 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           )}
         </div>
       </div>
+
+      <TurnCoach
+        text={getTurnCoach(gameState, me, {
+          robberMode,
+          pendingSteal: !!(pendingSteal && stealTargets.length > 0),
+          selectedAction,
+        })}
+        highlight={isMyTurn && !gameState.winner}
+      />
 
       <div className="board-stage" style={styles.boardArea}>
         <Board
@@ -919,6 +973,7 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: '8px 12px',
+    paddingTop: 'max(8px, env(safe-area-inset-top, 0px))',
     background: '#0f3460',
     flexShrink: 0,
   },
