@@ -276,3 +276,20 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 export function useSocket() {
   return useContext(SocketContext);
 }
+
+// Public room list for the join browser. Returns [] on any failure so the UI
+// degrades to manual code entry.
+export async function fetchRooms(): Promise<{ id: string; players: { name: string }[]; inGame: boolean }[]> {
+  const base = SERVER_URL.replace(/\/$/, '');
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 8000);
+    const res = await fetch(`${base}/api/rooms`, { signal: ctrl.signal });
+    clearTimeout(t);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}

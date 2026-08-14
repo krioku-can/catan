@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useSocket } from '../hooks/useSocket';
+import { useSocket, fetchRooms } from '../hooks/useSocket';
 import { getStored, setStored } from '../storage';
 
 export default function Lobby({ onBack, initialRoomCode }: { onBack?: () => void; initialRoomCode?: string }) {
@@ -8,6 +8,8 @@ export default function Lobby({ onBack, initialRoomCode }: { onBack?: () => void
   const [roomCode, setRoomCode] = useState(initialRoomCode || '');
   const [showJoin, setShowJoin] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [rooms, setRooms] = useState<{ id: string; players: { name: string }[]; inGame: boolean }[]>([]);
+  const [roomsLoaded, setRoomsLoaded] = useState(false);
 
   // Auto-join when the app is opened with a ?room=CODE share link.
   useEffect(() => {
@@ -15,6 +17,20 @@ export default function Lobby({ onBack, initialRoomCode }: { onBack?: () => void
       joinRoom(initialRoomCode, name || 'Player');
     }
   }, [connected, initialRoomCode, room, joinRoom, name]);
+
+  // Load the live room list whenever the join view opens.
+  useEffect(() => {
+    if (!showJoin) return;
+    let cancelled = false;
+    setRoomsLoaded(false);
+    fetchRooms().then(r => {
+      if (!cancelled) {
+        setRooms(r);
+        setRoomsLoaded(true);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [showJoin, connected]);
 
   if (!connected) {
     return (
@@ -153,6 +169,39 @@ export default function Lobby({ onBack, initialRoomCode }: { onBack?: () => void
             <button type="button" style={styles.primaryBtn} onClick={() => joinRoom(roomCode, name || 'Player')}>
               Join
             </button>
+            <div style={styles.roomsSection}>
+              <div style={styles.roomsHeader}>
+                <span style={styles.roomsTitle}>Open rooms</span>
+                <button type="button" style={styles.refreshBtn} onClick={() => {
+                  setRoomsLoaded(false);
+                  fetchRooms().then(r => { setRooms(r); setRoomsLoaded(true); });
+                }}>
+                  ↻
+                </button>
+              </div>
+              {!roomsLoaded ? (
+                <p style={styles.roomsEmpty}>Loading…</p>
+              ) : rooms.length === 0 ? (
+                <p style={styles.roomsEmpty}>No open rooms right now.</p>
+              ) : (
+                <div style={styles.roomsList}>
+                  {rooms.filter(r => !r.inGame).map(r => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      style={styles.roomRow}
+                      onClick={() => joinRoom(r.id, name || 'Player')}
+                    >
+                      <span style={styles.roomRowCode}>{r.id}</span>
+                      <span style={styles.roomRowPlayers}>
+                        {r.players.length}/4 {r.players.map(p => p.name).join(', ')}
+                      </span>
+                      <span style={styles.roomRowJoin}>Join →</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <button type="button" style={styles.secondaryBtn} onClick={() => setShowJoin(false)}>
               Back
             </button>
@@ -357,5 +406,74 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#8890a0',
     fontSize: 15,
     cursor: 'pointer',
+  },
+  roomsSection: {
+    borderTop: '1px solid #0f3460',
+    paddingTop: 12,
+    marginTop: 4,
+  },
+  roomsHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  roomsTitle: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#8890a0',
+    letterSpacing: 1,
+  },
+  refreshBtn: {
+    padding: '2px 10px',
+    border: '1px solid #0f3460',
+    borderRadius: 6,
+    background: 'transparent',
+    color: '#8890a0',
+    fontSize: 14,
+    cursor: 'pointer',
+  },
+  roomsEmpty: {
+    fontSize: 13,
+    color: '#556080',
+    textAlign: 'center',
+    padding: '8px 0',
+  },
+  roomsList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+  },
+  roomRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    padding: '10px 12px',
+    border: '1px solid #0f3460',
+    borderRadius: 8,
+    background: '#1a1a2e',
+    cursor: 'pointer',
+    color: '#e0e0e0',
+    textAlign: 'left',
+  },
+  roomRowCode: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#ffd700',
+    letterSpacing: 2,
+    minWidth: 48,
+  },
+  roomRowPlayers: {
+    flex: 1,
+    fontSize: 13,
+    color: '#8890a0',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  roomRowJoin: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#34d399',
   },
 };
