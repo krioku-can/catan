@@ -5,6 +5,7 @@ import OnlineGame from './components/OnlineGame';
 import Game from './components/Game';
 import Profile from './components/Profile';
 import { getStored, setStored } from './storage';
+import { APP_VERSION } from './version';
 
 type Mode = 'home' | 'local' | 'online' | 'profile' | 'resume';
 
@@ -29,6 +30,7 @@ function Home({ onPick }: { onPick: (m: Mode) => void }) {
     <div style={styles.container}>
       <h1 style={styles.title}>🏝️ CATAN</h1>
       <p style={styles.subtitle}>Settle the island</p>
+      <div style={styles.versionBadge} title="Build version (git commit + build time)">v{APP_VERSION}</div>
 
       <div style={styles.card}>
         <input
@@ -139,6 +141,14 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 15,
     color: '#8890a0',
     marginBottom: 28,
+  },
+  versionBadge: {
+    fontSize: 11,
+    color: '#556080',
+    fontFamily: 'monospace',
+    marginTop: -18,
+    marginBottom: 12,
+    userSelect: 'none',
   },
   card: {
     background: '#16213e',
