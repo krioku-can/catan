@@ -140,6 +140,33 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
         case 'roll_dice': {
           const [d1, d2] = rollDice(gameState);
           addLog(`${current.name} rolled ${d1 + d2}`);
+          // If the AI rolled a 7, the discard queue may hold OTHER AIs (the
+          // roller itself might not be in it). Drain every AI in the queue so
+          // the game doesn't freeze on "Waiting for discard: <AI>" — the
+          // `discard` case below only fires when the CURRENT AI is in the queue.
+          if (d1 + d2 === 7) {
+            let guard = 0;
+            while (gameState.phase === 'discard' && guard++ < 10) {
+              const aiInQueue = gameState.players.find(
+                p => p.isAI && gameState.discardQueue.includes(p.color)
+              );
+              if (!aiInQueue) break;
+              const total = (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
+                .reduce((s, r) => s + (aiInQueue.resources[r] || 0), 0);
+              const mustDiscard = Math.floor(total / 2);
+              const toDiscard: Partial<Record<ResourceType, number>> = {};
+              let remaining = mustDiscard;
+              const sorted = (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
+                .sort((a, b) => (aiInQueue.resources[b] || 0) - (aiInQueue.resources[a] || 0));
+              for (const r of sorted) {
+                if (remaining <= 0) break;
+                const take = Math.min(aiInQueue.resources[r] || 0, remaining);
+                if (take > 0) { toDiscard[r] = take; remaining -= take; }
+              }
+              discardResources(gameState, aiInQueue.color, toDiscard);
+              addLog(`${aiInQueue.name} discarded cards after the 7`);
+            }
+          }
           break;
         }
         case 'skip_trade':
