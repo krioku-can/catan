@@ -31,4 +31,4 @@ rm -rf "$OUTDIR"
   2>&1 | grep -v "deprecat\|migration" || true)
 
 echo "▸ Running $GAMES full games (players: $PLAYERS)"
-GAMES="$GAMES" PLAYERS="$PLAYERS" node "$HARNESS"
+GAMES="$GAMES" PLAYERS="$PLAYERS" GAMEOUT="$OUTDIR/rules.js" node "$HARNESS"

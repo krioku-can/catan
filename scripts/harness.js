@@ -12,8 +12,10 @@
 //
 // Exit 0 = all games completed with a winner. Exit 1 = stall or illegal move.
 // ─────────────────────────────────────────────────────────────────────────────
-const R = require(process.env.GAMEOUT || '/tmp/catan-gameout/rules.js');
-const B = require(process.env.GAMEOUT || '/tmp/catan-gameout/board.js');
+const path = require('path');
+const RULES_PATH = process.env.GAMEOUT || '/tmp/catan-gameout/rules.js';
+const R = require(RULES_PATH);
+const B = require(path.join(path.dirname(RULES_PATH), 'board.js'));
 
 const GAMES = parseInt(process.env.GAMES || '20', 10);
 const PLAYERS = (process.env.PLAYERS || '2 3 4').split(/\s+/).map(Number);
