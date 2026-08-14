@@ -9,6 +9,27 @@ const PLAYER_COLORS: Record<string, string> = {
   orange: '#f57c00',
 };
 
+/** High-quality painted hex textures (primary terrain art). */
+const HEX_IMAGES: Record<string, string> = {
+  lumber: '/assets/hex-lumber.png',
+  brick: '/assets/hex-brick.png',
+  wool: '/assets/hex-wool.png',
+  grain: '/assets/hex-grain.png',
+  ore: '/assets/hex-ore.png',
+  desert: '/assets/hex-desert.png',
+};
+
+const ROBBER_IMG = '/assets/robber.png';
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
 /** Darker / lighter variants for 3D piece faces */
 const PLAYER_SHADE: Record<string, { mid: string; dark: string; light: string; edge: string }> = {
   red:    { mid: '#d32f2f', dark: '#8e1a1a', light: '#ef5350', edge: '#5c1010' },
@@ -353,16 +374,18 @@ function drawWaterHex(ctx: CanvasRenderingContext2D, cx: number, cy: number, siz
   ctx.restore();
 }
 
-/* ─── High-quality 2D hex tiles ────────────────────────────────────── */
+/* ─── High-quality 2D hex tiles (painted assets + procedural fallback) ── */
 
 function drawTerrainHex(
   ctx: CanvasRenderingContext2D,
   cx: number, cy: number, size: number,
   type: string,
   hasRobber: boolean,
+  img: HTMLImageElement | null = null,
 ) {
   const t = TERRAIN[type] || TERRAIN.desert;
   const pts = hexCorners(cx, cy, size);
+  const hasArt = !!(img && img.complete && img.naturalWidth > 0);
 
   // Soft table shadow
   ctx.save();
@@ -378,37 +401,51 @@ function drawTerrainHex(
   ctx.save();
   ctx.clip();
 
-  // Rich base gradient
-  const rg = ctx.createRadialGradient(cx - size * 0.2, cy - size * 0.25, size * 0.05, cx, cy, size * 1.05);
-  rg.addColorStop(0, t.accent);
-  rg.addColorStop(0.4, t.base);
-  rg.addColorStop(1, t.mid);
-  ctx.fillStyle = rg;
-  ctx.fill();
+  if (hasArt) {
+    // Painted hex texture — full bleed, crisp
+    const s = size * 2.05;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img!, cx - s / 2, cy - s / 2, s, s);
 
-  // Stronger procedural overlay
-  const pattern = getTerrainPattern(ctx, type);
-  if (pattern) {
-    ctx.globalAlpha = 0.72;
-    ctx.fillStyle = pattern;
+    // Very light sheen so tiles read as physical pieces on the table
+    const sheen = ctx.createLinearGradient(cx - size, cy - size, cx + size * 0.5, cy + size);
+    sheen.addColorStop(0, 'rgba(255,255,255,0.14)');
+    sheen.addColorStop(0.45, 'rgba(255,255,255,0)');
+    sheen.addColorStop(1, 'rgba(0,0,0,0.08)');
     fillHexPath(ctx, pts);
+    ctx.fillStyle = sheen;
     ctx.fill();
+  } else {
+    // Procedural fallback while assets load / if a file fails
+    const rg = ctx.createRadialGradient(cx - size * 0.2, cy - size * 0.25, size * 0.05, cx, cy, size * 1.05);
+    rg.addColorStop(0, t.accent);
+    rg.addColorStop(0.4, t.base);
+    rg.addColorStop(1, t.mid);
+    ctx.fillStyle = rg;
+    ctx.fill();
+
+    const pattern = getTerrainPattern(ctx, type);
+    if (pattern) {
+      ctx.globalAlpha = 0.72;
+      ctx.fillStyle = pattern;
+      fillHexPath(ctx, pts);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    ctx.globalAlpha = 0.55;
+    paintTerrainMotifs(ctx, cx, cy, size, type, t);
     ctx.globalAlpha = 1;
+
+    const sheen = ctx.createLinearGradient(cx - size, cy - size, cx + size * 0.5, cy + size);
+    sheen.addColorStop(0, 'rgba(255,255,255,0.28)');
+    sheen.addColorStop(0.4, 'rgba(255,255,255,0.05)');
+    sheen.addColorStop(1, 'rgba(0,0,0,0.12)');
+    fillHexPath(ctx, pts);
+    ctx.fillStyle = sheen;
+    ctx.fill();
   }
-
-  // Large readable terrain motifs (drawn live — crisp at any zoom)
-  ctx.globalAlpha = 0.55;
-  paintTerrainMotifs(ctx, cx, cy, size, type, t);
-  ctx.globalAlpha = 1;
-
-  // Soft lighting sheen
-  const sheen = ctx.createLinearGradient(cx - size, cy - size, cx + size * 0.5, cy + size);
-  sheen.addColorStop(0, 'rgba(255,255,255,0.28)');
-  sheen.addColorStop(0.4, 'rgba(255,255,255,0.05)');
-  sheen.addColorStop(1, 'rgba(0,0,0,0.12)');
-  fillHexPath(ctx, pts);
-  ctx.fillStyle = sheen;
-  ctx.fill();
 
   ctx.restore();
 
@@ -637,9 +674,24 @@ function drawNumberToken(ctx: CanvasRenderingContext2D, cx: number, cy: number, 
   }
 }
 
-/* ─── 3D Robber meeple ─────────────────────────────────────────────── */
+/* ─── Robber (painted asset preferred, 3D meeple fallback) ─────────── */
 
-function drawRobber(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number) {
+function drawRobber(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, size: number,
+  img: HTMLImageElement | null = null,
+) {
+  if (img && img.complete && img.naturalWidth > 0) {
+    const s = size * 0.82;
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.4)';
+    ctx.shadowBlur = 6;
+    ctx.shadowOffsetY = 2;
+    ctx.drawImage(img, cx - s / 2, cy - s / 2, s, s);
+    ctx.restore();
+    return;
+  }
+
   const s = size * 0.42;
   ctx.save();
   // Ground shadow
@@ -1150,6 +1202,9 @@ export default function Board({
   const containerRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [assetsReady, setAssetsReady] = useState(0);
+  const imagesRef = useRef<Record<string, HTMLImageElement | null>>({});
+  const robberRef = useRef<HTMLImageElement | null>(null);
   const lastTouch = useRef<{ x: number; y: number } | null>(null);
   const lastPinchDist = useRef<number | null>(null);
   const dragStart = useRef<{ x: number; y: number } | null>(null);
@@ -1159,6 +1214,31 @@ export default function Board({
 
   const CANVAS_W = hexSize * 12;
   const CANVAS_H = hexSize * 11;
+
+  // Preload painted hex + robber assets once
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(
+        Object.entries(HEX_IMAGES).map(async ([k, src]) => {
+          try {
+            return [k, await loadImage(src)] as const;
+          } catch {
+            return [k, null] as const;
+          }
+        }),
+      );
+      if (cancelled) return;
+      entries.forEach(([k, img]) => { imagesRef.current[k] = img; });
+      try {
+        robberRef.current = await loadImage(ROBBER_IMG);
+      } catch {
+        robberRef.current = null;
+      }
+      setAssetsReady(n => n + 1);
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1199,13 +1279,14 @@ export default function Board({
       drawWaterHex(ctx, x + W / 2, y + H / 2, hexSize);
     });
 
-    // Land hexes — high-quality procedural 2D
+    // Land hexes — painted assets (procedural fallback until loaded)
     gameState.board.forEach(tile => {
       const { x, y } = hexToPixel(tile.q, tile.r, hexSize);
       drawTerrainHex(
         ctx, x + W / 2, y + H / 2, hexSize,
         tile.type,
         !!tile.hasRobber,
+        imagesRef.current[tile.type] || null,
       );
     });
 
@@ -1282,7 +1363,7 @@ export default function Board({
       const cx = x + W / 2;
       const cy = y + H / 2;
       if (tile.hasRobber) {
-        drawRobber(ctx, cx, cy, hexSize);
+        drawRobber(ctx, cx, cy, hexSize, robberRef.current);
       } else if (tile.number) {
         drawNumberToken(ctx, cx, cy + hexSize * 0.02, hexSize, tile.number);
       }
@@ -1350,7 +1431,7 @@ export default function Board({
 
       ctx.restore();
     }
-  }, [gameState, hexSize, CANVAS_W, CANVAS_H, selectedAction, debug]);
+  }, [gameState, hexSize, CANVAS_W, CANVAS_H, selectedAction, assetsReady, debug]);
 
   const screenToCanvas = useCallback((screenX: number, screenY: number) => {
     const container = containerRef.current;
