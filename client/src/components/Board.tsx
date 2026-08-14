@@ -9,20 +9,23 @@ const PLAYER_COLORS: Record<string, string> = {
   orange: '#f57c00',
 };
 
-const HEX_IMAGES: Record<string, string> = {
-  lumber: '/assets/hex-lumber.png',
-  brick: '/assets/hex-brick.png',
-  wool: '/assets/hex-wool.png',
-  grain: '/assets/hex-grain.png',
-  ore: '/assets/hex-ore.png',
-  desert: '/assets/hex-desert.png',
+/** Darker / lighter variants for 3D piece faces */
+const PLAYER_SHADE: Record<string, { mid: string; dark: string; light: string; edge: string }> = {
+  red:    { mid: '#d32f2f', dark: '#8e1a1a', light: '#ef5350', edge: '#5c1010' },
+  blue:   { mid: '#1976d2', dark: '#0d47a1', light: '#42a5f5', edge: '#0a306e' },
+  white:  { mid: '#f0f0f0', dark: '#b0b0b0', light: '#ffffff', edge: '#6e6e6e' },
+  orange: { mid: '#f57c00', dark: '#b35300', light: '#ffb74d', edge: '#7a3800' },
 };
 
-const ROBBER_IMG = '/assets/robber.png';
-
-const TERRAIN_FALLBACK: Record<string, string> = {
-  brick: '#c4784a', lumber: '#3d7a3d', wool: '#8fbc5a',
-  grain: '#e0b84a', ore: '#8a8f95', desert: '#e8d5a3',
+const TERRAIN: Record<string, {
+  base: string; mid: string; deep: string; accent: string; rim: string; label: string;
+}> = {
+  lumber: { base: '#3f8a3f', mid: '#2f6b2f', deep: '#1e4a1e', accent: '#6bb86b', rim: '#1a3d1a', label: 'Forest' },
+  brick:  { base: '#c4784a', mid: '#a85e38', deep: '#7a3f22', accent: '#e0a078', rim: '#5c2e18', label: 'Hills' },
+  wool:   { base: '#8fbc5a', mid: '#6f9a40', deep: '#4a6e28', accent: '#c5e08a', rim: '#3a5520', label: 'Pasture' },
+  grain:  { base: '#e0b84a', mid: '#c9a030', deep: '#8a6e18', accent: '#f5d878', rim: '#6a5410', label: 'Fields' },
+  ore:    { base: '#8a8f95', mid: '#6a6f75', deep: '#454a50', accent: '#b8bdc4', rim: '#2e3236', label: 'Mountains' },
+  desert: { base: '#e8d5a3', mid: '#d4bf88', deep: '#b09a68', accent: '#f5e8c8', rim: '#8a7648', label: 'Desert' },
 };
 
 interface BoardProps {
@@ -35,6 +38,8 @@ interface BoardProps {
   selectedAction: string | null;
   debug?: boolean;
 }
+
+/* ─── Geometry helpers ─────────────────────────────────────────────── */
 
 function hexCorners(cx: number, cy: number, size: number) {
   const pts: { x: number; y: number }[] = [];
@@ -52,40 +57,226 @@ function fillHexPath(ctx: CanvasRenderingContext2D, pts: { x: number; y: number 
   ctx.closePath();
 }
 
+function roundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number, r: number,
+) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+
+function shadeHex(hex: string, amount: number): string {
+  // amount: -1..1 darken/lighten
+  const n = hex.replace('#', '');
+  const r = parseInt(n.slice(0, 2), 16);
+  const g = parseInt(n.slice(2, 4), 16);
+  const b = parseInt(n.slice(4, 6), 16);
+  const f = (c: number) => Math.max(0, Math.min(255, Math.round(c + amount * 255)));
+  return `rgb(${f(r)},${f(g)},${f(b)})`;
+}
+
+/* ─── Cached procedural terrain textures (zero network) ────────────── */
+
+const terrainPatternCache = new Map<string, CanvasPattern | null>();
+
+function getTerrainPattern(
+  ctx: CanvasRenderingContext2D,
+  type: string,
+): CanvasPattern | null {
+  if (terrainPatternCache.has(type)) return terrainPatternCache.get(type) ?? null;
+
+  const t = TERRAIN[type] || TERRAIN.desert;
+  const S = 128;
+  const off = document.createElement('canvas');
+  off.width = S;
+  off.height = S;
+  const o = off.getContext('2d');
+  if (!o) {
+    terrainPatternCache.set(type, null);
+    return null;
+  }
+
+  // Base wash
+  const bg = o.createLinearGradient(0, 0, S, S);
+  bg.addColorStop(0, t.accent);
+  bg.addColorStop(0.45, t.base);
+  bg.addColorStop(1, t.mid);
+  o.fillStyle = bg;
+  o.fillRect(0, 0, S, S);
+
+  // Fine grain noise (deterministic pseudo-noise via sines — cheap, no images)
+  o.globalAlpha = 0.12;
+  for (let y = 0; y < S; y += 2) {
+    for (let x = 0; x < S; x += 2) {
+      const n = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+      const v = n - Math.floor(n);
+      o.fillStyle = v > 0.55 ? t.deep : t.accent;
+      o.fillRect(x, y, 2, 2);
+    }
+  }
+  o.globalAlpha = 1;
+
+  // Terrain-specific motifs
+  o.save();
+  if (type === 'lumber') {
+    // Soft tree crowns
+    for (let i = 0; i < 14; i++) {
+      const x = ((i * 47) % 100) + 14;
+      const y = ((i * 73) % 100) + 14;
+      o.fillStyle = i % 2 ? t.deep : t.mid;
+      o.beginPath();
+      o.moveTo(x, y + 18);
+      o.lineTo(x - 10, y + 6);
+      o.lineTo(x - 4, y + 6);
+      o.lineTo(x - 12, y - 6);
+      o.lineTo(x, y - 16);
+      o.lineTo(x + 12, y - 6);
+      o.lineTo(x + 4, y + 6);
+      o.lineTo(x + 10, y + 6);
+      o.closePath();
+      o.globalAlpha = 0.35;
+      o.fill();
+    }
+  } else if (type === 'brick') {
+    // Layered hills / clay ridges
+    o.globalAlpha = 0.28;
+    for (let i = 0; i < 6; i++) {
+      const y = 20 + i * 16;
+      o.strokeStyle = i % 2 ? t.deep : t.accent;
+      o.lineWidth = 4;
+      o.beginPath();
+      o.moveTo(0, y);
+      for (let x = 0; x <= S; x += 8) {
+        o.lineTo(x, y + Math.sin(x * 0.08 + i) * 6);
+      }
+      o.stroke();
+    }
+  } else if (type === 'wool') {
+    // Soft pasture patches + tiny sheep dots
+    o.globalAlpha = 0.25;
+    for (let i = 0; i < 10; i++) {
+      const x = ((i * 53) % 110) + 8;
+      const y = ((i * 91) % 110) + 8;
+      o.fillStyle = i % 3 === 0 ? t.accent : t.deep;
+      o.beginPath();
+      o.ellipse(x, y, 14, 9, i * 0.4, 0, Math.PI * 2);
+      o.fill();
+    }
+    o.globalAlpha = 0.55;
+    o.fillStyle = '#f2f2e8';
+    for (let i = 0; i < 8; i++) {
+      const x = ((i * 37) % 100) + 14;
+      const y = ((i * 61) % 100) + 14;
+      o.beginPath();
+      o.arc(x, y, 3.2, 0, Math.PI * 2);
+      o.fill();
+    }
+  } else if (type === 'grain') {
+    // Wheat rows
+    o.globalAlpha = 0.3;
+    o.strokeStyle = t.deep;
+    o.lineWidth = 1.5;
+    for (let i = 0; i < 18; i++) {
+      const x = 6 + i * 7;
+      o.beginPath();
+      o.moveTo(x, 10);
+      for (let y = 10; y < S - 10; y += 6) {
+        o.lineTo(x + Math.sin(y * 0.15 + i) * 2.5, y);
+      }
+      o.stroke();
+    }
+    o.globalAlpha = 0.4;
+    o.fillStyle = t.accent;
+    for (let i = 0; i < 20; i++) {
+      const x = ((i * 29) % 110) + 8;
+      const y = ((i * 47) % 110) + 8;
+      o.beginPath();
+      o.ellipse(x, y, 2.5, 5, -0.4, 0, Math.PI * 2);
+      o.fill();
+    }
+  } else if (type === 'ore') {
+    // Rocky facets
+    o.globalAlpha = 0.35;
+    for (let i = 0; i < 12; i++) {
+      const x = ((i * 41) % 100) + 10;
+      const y = ((i * 67) % 100) + 10;
+      o.fillStyle = i % 2 ? t.deep : t.accent;
+      o.beginPath();
+      o.moveTo(x, y - 12);
+      o.lineTo(x + 14, y);
+      o.lineTo(x + 6, y + 14);
+      o.lineTo(x - 10, y + 8);
+      o.lineTo(x - 12, y - 4);
+      o.closePath();
+      o.fill();
+    }
+  } else if (type === 'desert') {
+    // Dune ripples
+    o.globalAlpha = 0.22;
+    o.strokeStyle = t.deep;
+    o.lineWidth = 2;
+    for (let i = 0; i < 8; i++) {
+      const y = 16 + i * 14;
+      o.beginPath();
+      o.moveTo(0, y);
+      for (let x = 0; x <= S; x += 6) {
+        o.lineTo(x, y + Math.sin(x * 0.06 + i * 0.8) * 5);
+      }
+      o.stroke();
+    }
+  }
+  o.restore();
+
+  const pattern = ctx.createPattern(off, 'repeat');
+  terrainPatternCache.set(type, pattern);
+  return pattern;
+}
+
+/* ─── Background / sea ─────────────────────────────────────────────── */
+
 function drawWoodBackground(ctx: CanvasRenderingContext2D, W: number, H: number) {
   const g = ctx.createLinearGradient(0, 0, W, H);
-  g.addColorStop(0, '#9C6B3C');
-  g.addColorStop(0.35, '#B07E4A');
-  g.addColorStop(0.6, '#9C6B3C');
-  g.addColorStop(1, '#7D5528');
+  g.addColorStop(0, '#8B5A2B');
+  g.addColorStop(0.3, '#A06B3A');
+  g.addColorStop(0.65, '#8B5A2B');
+  g.addColorStop(1, '#6B3F1A');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, W, H);
+
+  // Plank seams
   ctx.save();
-  ctx.globalAlpha = 0.08;
-  for (let i = 0; i < 40; i++) {
-    const y = (H / 40) * i + Math.sin(i * 1.7) * 3;
-    ctx.strokeStyle = i % 3 === 0 ? '#3e2410' : '#c48a4a';
-    ctx.lineWidth = i % 5 === 0 ? 2.5 : 1;
+  ctx.globalAlpha = 0.14;
+  for (let i = 0; i < 28; i++) {
+    const y = (H / 28) * i + Math.sin(i * 1.3) * 2;
+    ctx.strokeStyle = i % 2 === 0 ? '#3a200c' : '#c99658';
+    ctx.lineWidth = i % 4 === 0 ? 2.2 : 1;
     ctx.beginPath();
     ctx.moveTo(0, y);
-    for (let x = 0; x < W; x += 20) ctx.lineTo(x, y + Math.sin(x * 0.02 + i) * 4);
+    for (let x = 0; x < W; x += 16) {
+      ctx.lineTo(x, y + Math.sin(x * 0.015 + i * 0.7) * 3.5);
+    }
+    ctx.stroke();
+  }
+  // Vertical grain flecks
+  ctx.globalAlpha = 0.06;
+  for (let i = 0; i < 60; i++) {
+    const x = ((i * 97) % W);
+    ctx.strokeStyle = '#2a1608';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x + Math.sin(i) * 4, H);
     ctx.stroke();
   }
   ctx.restore();
 }
 
-function drawWaterHex(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number) {
-  const pts = hexCorners(cx, cy, size * 1.02);
-  fillHexPath(ctx, pts);
-  const g = ctx.createRadialGradient(cx - size * 0.2, cy - size * 0.2, size * 0.1, cx, cy, size);
-  g.addColorStop(0, '#4aa9e0');
-  g.addColorStop(0.55, '#2f8ecf');
-  g.addColorStop(1, '#1f6fad');
-  ctx.fillStyle = g;
-  ctx.fill();
-}
-
-/** Continuous sea frame under the island (official board look). */
 function drawSeaFrame(
   ctx: CanvasRenderingContext2D,
   _board: { q: number; r: number }[],
@@ -93,111 +284,351 @@ function drawSeaFrame(
   W: number,
   H: number,
 ) {
-  // Soft blue disc behind everything coastal
   const cx = W / 2;
   const cy = H / 2;
-  // Rough radius covering outer ring + water
-  const R = size * 5.2;
-  const g = ctx.createRadialGradient(cx, cy, size * 2.2, cx, cy, R);
-  g.addColorStop(0, 'rgba(47, 142, 207, 0)');
-  g.addColorStop(0.35, '#3a9ad9');
-  g.addColorStop(0.75, '#2b7fb8');
-  g.addColorStop(1, '#1a5f96');
+  const R = size * 5.25;
+
+  // Deep ocean disc
+  const g = ctx.createRadialGradient(cx - size * 0.3, cy - size * 0.4, size * 1.2, cx, cy, R);
+  g.addColorStop(0, 'rgba(90, 180, 230, 0.15)');
+  g.addColorStop(0.3, '#4aa8dc');
+  g.addColorStop(0.62, '#2f86c4');
+  g.addColorStop(0.88, '#1f659e');
+  g.addColorStop(1, '#154a78');
   ctx.beginPath();
   ctx.arc(cx, cy, R, 0, Math.PI * 2);
   ctx.fillStyle = g;
   ctx.fill();
 
-  // Sandy coast ring (like the physical board beach)
+  // Subtle wave rings
   ctx.save();
-  ctx.strokeStyle = 'rgba(232, 210, 160, 0.55)';
-  ctx.lineWidth = size * 0.22;
+  ctx.globalAlpha = 0.12;
+  ctx.strokeStyle = '#dff4ff';
+  for (let i = 0; i < 5; i++) {
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy, size * (2.6 + i * 0.45), 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // Sandy beach ring
+  ctx.save();
+  ctx.strokeStyle = 'rgba(236, 214, 164, 0.7)';
+  ctx.lineWidth = size * 0.26;
+  ctx.lineCap = 'round';
   ctx.beginPath();
-  // Approximate coast as circle through outer hex centers
-  const coastR = size * 3.55;
-  ctx.arc(cx, cy, coastR, 0, Math.PI * 2);
+  ctx.arc(cx, cy, size * 3.52, 0, Math.PI * 2);
+  ctx.stroke();
+  // Inner beach highlight
+  ctx.strokeStyle = 'rgba(255, 245, 220, 0.35)';
+  ctx.lineWidth = size * 0.08;
+  ctx.beginPath();
+  ctx.arc(cx, cy, size * 3.42, 0, Math.PI * 2);
   ctx.stroke();
   ctx.restore();
 }
 
-function drawHexWithImage(
+function drawWaterHex(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number) {
+  const pts = hexCorners(cx, cy, size * 1.02);
+  fillHexPath(ctx, pts);
+  const g = ctx.createRadialGradient(cx - size * 0.25, cy - size * 0.25, size * 0.08, cx, cy, size);
+  g.addColorStop(0, '#6ec4ef');
+  g.addColorStop(0.45, '#3a9ad9');
+  g.addColorStop(1, '#1f6fad');
+  ctx.fillStyle = g;
+  ctx.fill();
+
+  // Soft wave arcs
+  ctx.save();
+  ctx.clip();
+  ctx.globalAlpha = 0.18;
+  ctx.strokeStyle = '#e8f7ff';
+  ctx.lineWidth = 1.5;
+  for (let i = 0; i < 3; i++) {
+    ctx.beginPath();
+    ctx.arc(cx - size * 0.1, cy + size * (0.05 + i * 0.18), size * (0.35 + i * 0.1), 0.2, Math.PI - 0.2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* ─── High-quality 2D hex tiles ────────────────────────────────────── */
+
+function drawTerrainHex(
   ctx: CanvasRenderingContext2D,
   cx: number, cy: number, size: number,
-  img: HTMLImageElement | null,
   type: string,
   hasRobber: boolean,
 ) {
-  // Draw terrain at full size so hexes tile flush edge-to-edge like a puzzle,
-  // with only the faint stroke seam separating tiles.
-  const drawSize = size;
-  const pts = hexCorners(cx, cy, drawSize);
+  const t = TERRAIN[type] || TERRAIN.desert;
+  const pts = hexCorners(cx, cy, size);
+
+  // Soft table shadow
   ctx.save();
-  // Subtle shadow so tiles sit flush (puzzle-fit), not floating apart.
-  ctx.shadowColor = 'rgba(0,0,0,0.2)';
-  ctx.shadowBlur = 3;
-  ctx.shadowOffsetY = 1;
+  ctx.shadowColor = 'rgba(0,0,0,0.3)';
+  ctx.shadowBlur = 5;
+  ctx.shadowOffsetY = 2;
   fillHexPath(ctx, pts);
-  ctx.fillStyle = TERRAIN_FALLBACK[type] || '#888';
+  ctx.fillStyle = t.deep;
   ctx.fill();
   ctx.restore();
 
   fillHexPath(ctx, pts);
   ctx.save();
   ctx.clip();
-  if (img && img.complete && img.naturalWidth > 0) {
-    const s = size * 2.05;
-    ctx.drawImage(img, cx - s / 2, cy - s / 2, s, s);
-  } else {
-    ctx.fillStyle = TERRAIN_FALLBACK[type] || '#888';
+
+  // Rich base gradient
+  const rg = ctx.createRadialGradient(cx - size * 0.2, cy - size * 0.25, size * 0.05, cx, cy, size * 1.05);
+  rg.addColorStop(0, t.accent);
+  rg.addColorStop(0.4, t.base);
+  rg.addColorStop(1, t.mid);
+  ctx.fillStyle = rg;
+  ctx.fill();
+
+  // Stronger procedural overlay
+  const pattern = getTerrainPattern(ctx, type);
+  if (pattern) {
+    ctx.globalAlpha = 0.72;
+    ctx.fillStyle = pattern;
+    fillHexPath(ctx, pts);
     ctx.fill();
+    ctx.globalAlpha = 1;
   }
+
+  // Large readable terrain motifs (drawn live — crisp at any zoom)
+  ctx.globalAlpha = 0.55;
+  paintTerrainMotifs(ctx, cx, cy, size, type, t);
+  ctx.globalAlpha = 1;
+
+  // Soft lighting sheen
+  const sheen = ctx.createLinearGradient(cx - size, cy - size, cx + size * 0.5, cy + size);
+  sheen.addColorStop(0, 'rgba(255,255,255,0.28)');
+  sheen.addColorStop(0.4, 'rgba(255,255,255,0.05)');
+  sheen.addColorStop(1, 'rgba(0,0,0,0.12)');
+  fillHexPath(ctx, pts);
+  ctx.fillStyle = sheen;
+  ctx.fill();
+
   ctx.restore();
 
+  // Beveled edges
+  ctx.save();
+  for (let i = 0; i < 6; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % 6];
+    const midY = (a.y + b.y) / 2;
+    const isTop = midY < cy;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.strokeStyle = isTop ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.4)';
+    ctx.lineWidth = isTop ? 2.4 : 2.6;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+  }
   fillHexPath(ctx, pts);
-  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-  ctx.lineWidth = 2;
-  ctx.stroke();
-  fillHexPath(ctx, pts);
-  ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+  ctx.strokeStyle = 'rgba(20,12,4,0.5)';
   ctx.lineWidth = 1.5;
   ctx.stroke();
+  ctx.restore();
 
   if (hasRobber) {
     fillHexPath(ctx, pts);
-    ctx.fillStyle = 'rgba(20,20,30,0.35)';
+    ctx.fillStyle = 'rgba(15,15,25,0.4)';
     ctx.fill();
   }
 }
 
-function drawNumberToken(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number, num: number) {
-  const r = size * 0.28;
+/** Distinctive terrain art painted directly onto each hex. */
+function paintTerrainMotifs(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, size: number,
+  type: string,
+  t: { deep: string; accent: string; mid: string; base: string },
+) {
   ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.35)';
-  ctx.shadowBlur = 4;
+  if (type === 'lumber') {
+    // Cluster of pines
+    const trees = [
+      [-0.35, 0.1, 0.34], [-0.05, 0.28, 0.28], [0.28, 0.05, 0.36],
+      [0.08, -0.15, 0.22], [-0.22, -0.2, 0.2],
+    ];
+    for (const [ox, oy, sc] of trees) {
+      const x = cx + ox * size;
+      const y = cy + oy * size + size * 0.12;
+      const s = size * sc;
+      ctx.fillStyle = t.deep;
+      ctx.beginPath();
+      ctx.moveTo(x, y - s);
+      ctx.lineTo(x + s * 0.55, y + s * 0.15);
+      ctx.lineTo(x + s * 0.2, y + s * 0.15);
+      ctx.lineTo(x + s * 0.45, y + s * 0.55);
+      ctx.lineTo(x - s * 0.45, y + s * 0.55);
+      ctx.lineTo(x - s * 0.2, y + s * 0.15);
+      ctx.lineTo(x - s * 0.55, y + s * 0.15);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = shadeHex(t.deep, -0.12);
+      ctx.fillRect(x - s * 0.08, y + s * 0.55, s * 0.16, s * 0.28);
+    }
+  } else if (type === 'brick') {
+    // Rolling clay hills + brick marks
+    ctx.fillStyle = t.deep;
+    ctx.beginPath();
+    ctx.moveTo(cx - size * 0.7, cy + size * 0.45);
+    ctx.quadraticCurveTo(cx - size * 0.35, cy - size * 0.15, cx - size * 0.05, cy + size * 0.1);
+    ctx.quadraticCurveTo(cx + size * 0.25, cy - size * 0.35, cx + size * 0.7, cy + size * 0.35);
+    ctx.lineTo(cx + size * 0.7, cy + size * 0.55);
+    ctx.lineTo(cx - size * 0.7, cy + size * 0.55);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = t.accent;
+    ctx.globalAlpha = 0.5;
+    for (let row = 0; row < 3; row++) {
+      for (let col = 0; col < 3; col++) {
+        const x = cx - size * 0.35 + col * size * 0.28 + (row % 2) * size * 0.1;
+        const y = cy + size * 0.05 + row * size * 0.14;
+        roundRect(ctx, x, y, size * 0.18, size * 0.08, 2);
+        ctx.fill();
+      }
+    }
+  } else if (type === 'wool') {
+    // Soft pasture mounds + sheep
+    ctx.fillStyle = t.deep;
+    ctx.globalAlpha = 0.45;
+    for (const [ox, oy, rx, ry] of [[-0.3, 0.15, 0.28, 0.14], [0.2, 0.25, 0.32, 0.12], [0.0, -0.05, 0.25, 0.1]] as const) {
+      ctx.beginPath();
+      ctx.ellipse(cx + ox * size, cy + oy * size, rx * size, ry * size, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = '#f4f1e6';
+    const sheep = [[-0.2, 0.05], [0.15, 0.18], [0.0, 0.3], [0.3, -0.05]];
+    for (const [ox, oy] of sheep) {
+      const x = cx + ox * size;
+      const y = cy + oy * size;
+      ctx.beginPath();
+      ctx.ellipse(x, y, size * 0.08, size * 0.06, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(x + size * 0.06, y - size * 0.02, size * 0.035, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  } else if (type === 'grain') {
+    // Wheat field rows
+    ctx.strokeStyle = t.deep;
+    ctx.lineWidth = Math.max(1.5, size * 0.03);
+    ctx.lineCap = 'round';
+    for (let i = -4; i <= 4; i++) {
+      const x = cx + i * size * 0.12;
+      ctx.beginPath();
+      ctx.moveTo(x, cy + size * 0.45);
+      ctx.quadraticCurveTo(x + size * 0.04, cy, x - size * 0.02, cy - size * 0.4);
+      ctx.stroke();
+      // head
+      ctx.fillStyle = t.accent;
+      ctx.beginPath();
+      ctx.ellipse(x - size * 0.02, cy - size * 0.42, size * 0.035, size * 0.08, -0.3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  } else if (type === 'ore') {
+    // Mountain peaks
+    const peaks = [
+      [-0.25, 0.55], [0.15, 0.7], [0.4, 0.4], [-0.45, 0.35],
+    ];
+    for (const [ox, h] of peaks) {
+      const x = cx + ox * size;
+      const y = cy + size * 0.35;
+      const hh = h * size;
+      ctx.fillStyle = t.deep;
+      ctx.beginPath();
+      ctx.moveTo(x - hh * 0.45, y);
+      ctx.lineTo(x, y - hh);
+      ctx.lineTo(x + hh * 0.45, y);
+      ctx.closePath();
+      ctx.fill();
+      // snow cap
+      ctx.fillStyle = 'rgba(245,248,255,0.75)';
+      ctx.beginPath();
+      ctx.moveTo(x, y - hh);
+      ctx.lineTo(x - hh * 0.15, y - hh * 0.7);
+      ctx.lineTo(x + hh * 0.15, y - hh * 0.7);
+      ctx.closePath();
+      ctx.fill();
+    }
+  } else {
+    // Desert dunes + sun
+    ctx.strokeStyle = t.deep;
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.5;
+    for (let i = 0; i < 4; i++) {
+      const y = cy - size * 0.15 + i * size * 0.18;
+      ctx.beginPath();
+      ctx.moveTo(cx - size * 0.55, y);
+      for (let x = -0.55; x <= 0.55; x += 0.08) {
+        ctx.lineTo(cx + x * size, y + Math.sin(x * 8 + i) * size * 0.04);
+      }
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 0.7;
+    ctx.fillStyle = '#f0c868';
+    ctx.beginPath();
+    ctx.arc(cx + size * 0.15, cy - size * 0.2, size * 0.14, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+/* ─── Number tokens ────────────────────────────────────────────────── */
+
+function drawNumberToken(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number, num: number) {
+  const r = size * 0.30;
+
+  // Token shadow
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.4)';
+  ctx.shadowBlur = 5;
   ctx.shadowOffsetY = 2;
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fillStyle = '#f8f4e8';
+  ctx.fillStyle = '#f4efe0';
   ctx.fill();
   ctx.restore();
+
+  // Ceramic disc with radial sheen
+  const g = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.35, r * 0.1, cx, cy, r);
+  g.addColorStop(0, '#fffaf0');
+  g.addColorStop(0.55, '#f0e8d4');
+  g.addColorStop(1, '#d9cfb4');
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fillStyle = '#f8f4e8';
+  ctx.fillStyle = g;
   ctx.fill();
-  ctx.strokeStyle = '#c9bfa0';
-  ctx.lineWidth = 2;
+
+  // Outer ring
+  ctx.strokeStyle = '#a89468';
+  ctx.lineWidth = 2.2;
   ctx.stroke();
+  // Inner ring
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.86, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+
   const isHot = num === 6 || num === 8;
-  ctx.fillStyle = isHot ? '#c62828' : '#2c2c2c';
-  ctx.font = `bold ${size * 0.32}px Georgia, serif`;
+  ctx.fillStyle = isHot ? '#c62828' : '#1e1e1e';
+  ctx.font = `bold ${size * 0.34}px Georgia, 'Times New Roman', serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(String(num), cx, cy - r * 0.08);
+
   const pips = num <= 7 ? num - 1 : 13 - num;
-  const pipR = Math.max(1.2, size * 0.035);
-  ctx.fillStyle = isHot ? '#c62828' : '#444';
-  const pipY = cy + r * 0.45;
-  const spacing = pipR * 2.8;
+  const pipR = Math.max(1.3, size * 0.038);
+  ctx.fillStyle = isHot ? '#c62828' : '#3a3a3a';
+  const pipY = cy + r * 0.48;
+  const spacing = pipR * 2.9;
   const startX = cx - ((pips - 1) * spacing) / 2;
   for (let p = 0; p < pips; p++) {
     ctx.beginPath();
@@ -206,70 +637,262 @@ function drawNumberToken(ctx: CanvasRenderingContext2D, cx: number, cy: number, 
   }
 }
 
-function drawRobber(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number, img: HTMLImageElement | null) {
-  if (img && img.complete && img.naturalWidth > 0) {
-    const s = size * 0.75;
-    ctx.drawImage(img, cx - s / 2, cy - s / 2, s, s);
-    return;
-  }
+/* ─── 3D Robber meeple ─────────────────────────────────────────────── */
+
+function drawRobber(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number) {
+  const s = size * 0.42;
   ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.4)';
-  ctx.shadowBlur = 6;
-  ctx.fillStyle = '#1a1a1a';
+  // Ground shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
   ctx.beginPath();
-  ctx.ellipse(cx, cy + size * 0.08, size * 0.16, size * 0.2, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx + 2, cy + s * 0.72, s * 0.42, s * 0.14, 0, 0, Math.PI * 2);
   ctx.fill();
+
+  // Body (dark grey with side shade)
+  const bodyG = ctx.createLinearGradient(cx - s * 0.4, cy, cx + s * 0.4, cy);
+  bodyG.addColorStop(0, '#1a1a1e');
+  bodyG.addColorStop(0.45, '#3a3a42');
+  bodyG.addColorStop(1, '#121216');
+
+  // Torso
+  ctx.fillStyle = bodyG;
   ctx.beginPath();
-  ctx.arc(cx, cy - size * 0.12, size * 0.12, 0, Math.PI * 2);
+  ctx.moveTo(cx - s * 0.32, cy + s * 0.55);
+  ctx.lineTo(cx - s * 0.38, cy - s * 0.05);
+  ctx.quadraticCurveTo(cx, cy - s * 0.25, cx + s * 0.38, cy - s * 0.05);
+  ctx.lineTo(cx + s * 0.32, cy + s * 0.55);
+  ctx.closePath();
   ctx.fill();
+
+  // Head
+  ctx.beginPath();
+  ctx.ellipse(cx, cy - s * 0.42, s * 0.28, s * 0.32, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Helmet ridge
+  ctx.fillStyle = '#0a0a0c';
+  ctx.beginPath();
+  ctx.ellipse(cx, cy - s * 0.55, s * 0.3, s * 0.14, 0, Math.PI, 0);
+  ctx.fill();
+
+  // Eye glint
+  ctx.fillStyle = 'rgba(255,80,60,0.85)';
+  ctx.beginPath();
+  ctx.arc(cx - s * 0.08, cy - s * 0.4, s * 0.05, 0, Math.PI * 2);
+  ctx.arc(cx + s * 0.1, cy - s * 0.4, s * 0.05, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Highlight edge
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.ellipse(cx - s * 0.08, cy - s * 0.42, s * 0.18, s * 0.24, -0.2, -1.2, 0.8);
+  ctx.stroke();
+
   ctx.restore();
 }
+
+/* ─── 3D isometric Settlement ──────────────────────────────────────── */
 
 function drawSettlement(ctx: CanvasRenderingContext2D, cx: number, cy: number, color: string, size: number) {
-  const s = size * 0.24;
+  const s = size * 0.28;
+  const sh = shadesFor(color);
+  // Depth vector (down-right) for extrusion
+  const dx = s * 0.28;
+  const dy = s * 0.38;
+
   ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.45)';
-  ctx.shadowBlur = 5;
-  ctx.shadowOffsetY = 2;
-  ctx.fillStyle = color;
+
+  // Ground shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.32)';
   ctx.beginPath();
-  ctx.moveTo(cx - s, cy + s * 0.55);
-  ctx.lineTo(cx - s, cy - s * 0.05);
-  ctx.lineTo(cx, cy - s * 0.9);
-  ctx.lineTo(cx + s, cy - s * 0.05);
-  ctx.lineTo(cx + s, cy + s * 0.55);
+  ctx.ellipse(cx + dx * 0.3, cy + s * 0.78, s * 0.95, s * 0.26, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Front body corners (house face)
+  const fl = { x: cx - s * 0.72, y: cy + s * 0.15 }; // front-left eave
+  const fr = { x: cx + s * 0.72, y: cy + s * 0.15 }; // front-right eave
+  const bl = { x: cx - s * 0.72, y: cy + s * 0.72 }; // front-left base
+  const br = { x: cx + s * 0.72, y: cy + s * 0.72 }; // front-right base
+  const peak = { x: cx, y: cy - s * 0.78 };
+
+  // Right side extrusion (darker)
+  ctx.fillStyle = sh.dark;
+  ctx.beginPath();
+  ctx.moveTo(fr.x, fr.y);
+  ctx.lineTo(fr.x + dx, fr.y + dy * 0.35);
+  ctx.lineTo(br.x + dx, br.y + dy * 0.35);
+  ctx.lineTo(br.x, br.y);
   ctx.closePath();
   ctx.fill();
-  ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-  ctx.lineWidth = 1.5;
+
+  // Roof right plane
+  ctx.beginPath();
+  ctx.moveTo(peak.x, peak.y);
+  ctx.lineTo(peak.x + dx * 0.6, peak.y + dy * 0.35);
+  ctx.lineTo(fr.x + dx, fr.y + dy * 0.35);
+  ctx.lineTo(fr.x, fr.y);
+  ctx.closePath();
+  ctx.fill();
+
+  // Front wall
+  const wallG = ctx.createLinearGradient(fl.x, cy, fr.x, cy);
+  wallG.addColorStop(0, sh.mid);
+  wallG.addColorStop(0.55, sh.light);
+  wallG.addColorStop(1, sh.mid);
+  ctx.fillStyle = wallG;
+  ctx.beginPath();
+  ctx.moveTo(fl.x, fl.y);
+  ctx.lineTo(fr.x, fr.y);
+  ctx.lineTo(br.x, br.y);
+  ctx.lineTo(bl.x, bl.y);
+  ctx.closePath();
+  ctx.fill();
+
+  // Front roof (left darker, right lighter for 3D)
+  ctx.fillStyle = shadeHex(sh.dark, -0.05);
+  ctx.beginPath();
+  ctx.moveTo(fl.x, fl.y);
+  ctx.lineTo(peak.x, peak.y);
+  ctx.lineTo(cx, fl.y);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = sh.light;
+  ctx.beginPath();
+  ctx.moveTo(fr.x, fr.y);
+  ctx.lineTo(peak.x, peak.y);
+  ctx.lineTo(cx, fl.y);
+  ctx.closePath();
+  ctx.fill();
+
+  // Door
+  ctx.fillStyle = 'rgba(0,0,0,0.38)';
+  roundRect(ctx, cx - s * 0.14, cy + s * 0.28, s * 0.28, s * 0.42, 2);
+  ctx.fill();
+
+  // Window
+  ctx.fillStyle = 'rgba(255, 236, 170, 0.65)';
+  roundRect(ctx, cx + s * 0.28, cy + s * 0.32, s * 0.18, s * 0.16, 1.5);
+  ctx.fill();
+
+  // Crisp outline
+  ctx.strokeStyle = sh.edge;
+  ctx.lineWidth = 1.4;
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(bl.x, bl.y);
+  ctx.lineTo(fl.x, fl.y);
+  ctx.lineTo(peak.x, peak.y);
+  ctx.lineTo(fr.x, fr.y);
+  ctx.lineTo(br.x, br.y);
+  ctx.closePath();
   ctx.stroke();
+
+  // Roof ridge highlight
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(peak.x, peak.y);
+  ctx.lineTo(cx, fl.y);
+  ctx.stroke();
+
   ctx.restore();
 }
 
+/* ─── 3D isometric City ────────────────────────────────────────────── */
+
 function drawCity(ctx: CanvasRenderingContext2D, cx: number, cy: number, color: string, size: number) {
-  const s = size * 0.3;
+  const s = size * 0.34;
+  const sh = shadesFor(color);
+  const dx = s * 0.26;
+  const dy = s * 0.34;
+
   ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.45)';
-  ctx.shadowBlur = 5;
-  ctx.shadowOffsetY = 2;
-  ctx.fillStyle = color;
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
   ctx.beginPath();
-  ctx.moveTo(cx - s, cy + s * 0.5);
-  ctx.lineTo(cx - s, cy - s * 0.1);
-  ctx.lineTo(cx - s * 0.4, cy - s * 0.55);
-  ctx.lineTo(cx - s * 0.4, cy - s * 0.95);
-  ctx.lineTo(cx, cy - s * 0.65);
-  ctx.lineTo(cx + s * 0.35, cy - s * 0.95);
-  ctx.lineTo(cx + s * 0.35, cy - s * 0.4);
-  ctx.lineTo(cx + s, cy - s * 0.1);
-  ctx.lineTo(cx + s, cy + s * 0.5);
-  ctx.closePath();
+  ctx.ellipse(cx + dx * 0.4, cy + s * 0.78, s * 1.2, s * 0.3, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
+
+  // Helper: draw a house block with peak at (px,py), width w, baseY
+  const block = (px: number, peakY: number, halfW: number, eaveY: number, baseY: number) => {
+    // right extrusion
+    ctx.fillStyle = sh.dark;
+    ctx.beginPath();
+    ctx.moveTo(px + halfW, eaveY);
+    ctx.lineTo(px + halfW + dx, eaveY + dy * 0.4);
+    ctx.lineTo(px + halfW + dx, baseY + dy * 0.4);
+    ctx.lineTo(px + halfW, baseY);
+    ctx.closePath();
+    ctx.fill();
+
+    // front wall
+    ctx.fillStyle = sh.mid;
+    ctx.beginPath();
+    ctx.moveTo(px - halfW, eaveY);
+    ctx.lineTo(px + halfW, eaveY);
+    ctx.lineTo(px + halfW, baseY);
+    ctx.lineTo(px - halfW, baseY);
+    ctx.closePath();
+    ctx.fill();
+
+    // roof L/R
+    ctx.fillStyle = shadeHex(sh.dark, -0.05);
+    ctx.beginPath();
+    ctx.moveTo(px - halfW, eaveY);
+    ctx.lineTo(px, peakY);
+    ctx.lineTo(px, eaveY);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = sh.light;
+    ctx.beginPath();
+    ctx.moveTo(px + halfW, eaveY);
+    ctx.lineTo(px, peakY);
+    ctx.lineTo(px, eaveY);
+    ctx.closePath();
+    ctx.fill();
+
+    // outline
+    ctx.strokeStyle = sh.edge;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(px - halfW, baseY);
+    ctx.lineTo(px - halfW, eaveY);
+    ctx.lineTo(px, peakY);
+    ctx.lineTo(px + halfW, eaveY);
+    ctx.lineTo(px + halfW, baseY);
+    ctx.closePath();
+    ctx.stroke();
+  };
+
+  // Main wider hall (left)
+  block(cx - s * 0.28, cy - s * 0.35, s * 0.55, cy + s * 0.08, cy + s * 0.72);
+  // Tower (right, taller)
+  block(cx + s * 0.42, cy - s * 0.95, s * 0.38, cy - s * 0.2, cy + s * 0.72);
+
+  // Windows
+  ctx.fillStyle = 'rgba(255, 236, 170, 0.7)';
+  roundRect(ctx, cx - s * 0.5, cy + s * 0.28, s * 0.16, s * 0.14, 1.5);
+  ctx.fill();
+  roundRect(ctx, cx - s * 0.2, cy + s * 0.28, s * 0.16, s * 0.14, 1.5);
+  ctx.fill();
+  roundRect(ctx, cx + s * 0.3, cy + s * 0.05, s * 0.14, s * 0.14, 1.5);
+  ctx.fill();
+  roundRect(ctx, cx + s * 0.3, cy - s * 0.15, s * 0.14, s * 0.14, 1.5);
+  ctx.fill();
+
+  // Door on main hall
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  roundRect(ctx, cx - s * 0.38, cy + s * 0.4, s * 0.2, s * 0.32, 2);
+  ctx.fill();
+
   ctx.restore();
 }
+
+/* ─── 3D Road (extruded plank) ─────────────────────────────────────── */
 
 function drawRoad(
   ctx: CanvasRenderingContext2D,
@@ -279,35 +902,111 @@ function drawRoad(
   const dx = x2 - x1;
   const dy = y2 - y1;
   const len = Math.hypot(dx, dy) || 1;
-  const inset = size * 0.18;
-  const sx = x1 + (dx / len) * inset;
-  const sy = y1 + (dy / len) * inset;
-  const ex = x2 - (dx / len) * inset;
-  const ey = y2 - (dy / len) * inset;
+  const ux = dx / len;
+  const uy = dy / len;
+  // Perpendicular
+  const px = -uy;
+  const py = ux;
+
+  const inset = size * 0.2;
+  const sx = x1 + ux * inset;
+  const sy = y1 + uy * inset;
+  const ex = x2 - ux * inset;
+  const ey = y2 - uy * inset;
+
+  const halfW = Math.max(4.5, size * 0.095);
+  const depth = Math.max(3, size * 0.06);
+
+  const sh = shadesFor(color);
+
+  // Quad corners for top face
+  const t1x = sx + px * halfW, t1y = sy + py * halfW;
+  const t2x = sx - px * halfW, t2y = sy - py * halfW;
+  const t3x = ex - px * halfW, t3y = ey - py * halfW;
+  const t4x = ex + px * halfW, t4y = ey + py * halfW;
+
+  // Depth offset (down-ish)
+  const ox = depth * 0.35;
+  const oy = depth * 0.9;
+
   ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.4)';
-  ctx.shadowBlur = 3;
-  ctx.strokeStyle = color;
-  ctx.lineWidth = Math.max(7, size * 0.16);
-  ctx.lineCap = 'round';
+
+  // Drop shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath();
+  ctx.moveTo(t1x + 1, t1y + 2);
+  ctx.lineTo(t2x + 1, t2y + 2);
+  ctx.lineTo(t3x + 1, t3y + 2);
+  ctx.lineTo(t4x + 1, t4y + 2);
+  ctx.closePath();
+  ctx.fill();
+
+  // Side face (extrusion)
+  ctx.fillStyle = sh.dark;
+  ctx.beginPath();
+  ctx.moveTo(t2x, t2y);
+  ctx.lineTo(t3x, t3y);
+  ctx.lineTo(t3x + ox, t3y + oy);
+  ctx.lineTo(t2x + ox, t2y + oy);
+  ctx.closePath();
+  ctx.fill();
+
+  // End caps lightly
+  ctx.fillStyle = shadeHex(sh.dark, -0.08);
+  ctx.beginPath();
+  ctx.moveTo(t1x, t1y);
+  ctx.lineTo(t2x, t2y);
+  ctx.lineTo(t2x + ox, t2y + oy);
+  ctx.lineTo(t1x + ox, t1y + oy);
+  ctx.closePath();
+  ctx.fill();
+
+  // Top face
+  const topG = ctx.createLinearGradient(t1x, t1y, t2x, t2y);
+  topG.addColorStop(0, sh.light);
+  topG.addColorStop(0.45, sh.mid);
+  topG.addColorStop(1, sh.dark);
+  ctx.fillStyle = topG;
+  ctx.beginPath();
+  ctx.moveTo(t1x, t1y);
+  ctx.lineTo(t2x, t2y);
+  ctx.lineTo(t3x, t3y);
+  ctx.lineTo(t4x, t4y);
+  ctx.closePath();
+  ctx.fill();
+
+  // Center groove (plank detail)
+  ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+  ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(sx, sy);
   ctx.lineTo(ex, ey);
   ctx.stroke();
-  ctx.shadowColor = 'transparent';
-  ctx.strokeStyle = 'rgba(255,255,255,0.28)';
-  ctx.lineWidth = Math.max(2, size * 0.05);
+
+  // Top edge highlight
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(t1x, t1y);
+  ctx.lineTo(t4x, t4y);
   ctx.stroke();
+
+  // Outline
+  ctx.strokeStyle = sh.edge;
+  ctx.lineWidth = 1.1;
+  ctx.beginPath();
+  ctx.moveTo(t1x, t1y);
+  ctx.lineTo(t2x, t2y);
+  ctx.lineTo(t3x, t3y);
+  ctx.lineTo(t4x, t4y);
+  ctx.closePath();
+  ctx.stroke();
+
   ctx.restore();
 }
 
-/**
- * Harbor visual matching official Catan digital style:
- * - Small gold plaque sitting in the BLUE water next to a coastal edge
- * - Two thin pier lines from the two harbor vertices → plaque (a clean V)
- * - Upright text: "3:1" + "?"  or  "2:1" + resource code (Br/Lu/Wo/Gr/Or)
- * Never drawn on land hex faces.
- */
+/* ─── Harbors ──────────────────────────────────────────────────────── */
+
 function drawOfficialHarbor(
   ctx: CanvasRenderingContext2D,
   ax: number, ay: number,
@@ -319,15 +1018,12 @@ function drawOfficialHarbor(
   const edgeMx = (ax + bx) / 2;
   const edgeMy = (ay + by) / 2;
 
-  // Direction from board center outward through the edge midpoint — always
-  // points into the water ring for any coastal edge.
   let ox = edgeMx - centerX;
   let oy = edgeMy - centerY;
   const olen = Math.hypot(ox, oy) || 1;
   ox /= olen;
   oy /= olen;
 
-  // Plaque sits in the water, pushed well past the coast.
   const pierLen = size * 1.15;
   const px = edgeMx + ox * pierLen;
   const py = edgeMy + oy * pierLen;
@@ -346,9 +1042,9 @@ function drawOfficialHarbor(
 
   ctx.save();
 
-  // --- Clean V pier lines (gold) from the two harbor corners to the plaque ---
-  ctx.strokeStyle = '#d4b56a';
-  ctx.lineWidth = Math.max(2.25, size * 0.05);
+  // Pier posts shadow
+  ctx.strokeStyle = 'rgba(40, 25, 8, 0.35)';
+  ctx.lineWidth = Math.max(4, size * 0.08);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.beginPath();
@@ -357,39 +1053,43 @@ function drawOfficialHarbor(
   ctx.lineTo(bx, by);
   ctx.stroke();
 
-  // Soft outer stroke for definition on blue water
-  ctx.strokeStyle = 'rgba(90, 60, 20, 0.35)';
-  ctx.lineWidth = Math.max(3.5, size * 0.07);
-  ctx.globalCompositeOperation = 'destination-over';
+  // Pier wood
+  const pierG = ctx.createLinearGradient(ax, ay, px, py);
+  pierG.addColorStop(0, '#c4a05a');
+  pierG.addColorStop(1, '#8a6a30');
+  ctx.strokeStyle = pierG;
+  ctx.lineWidth = Math.max(2.4, size * 0.055);
   ctx.beginPath();
   ctx.moveTo(ax, ay);
   ctx.lineTo(px, py);
   ctx.lineTo(bx, by);
   ctx.stroke();
-  ctx.globalCompositeOperation = 'source-over';
 
-  // --- Upright gold plaque (NO rotation — text always readable) ---
-  // Shrunk so it sits comfortably inside the water hex without touching land.
-  const s = size * 0.30; // half-width of plaque
-  // Rounded square
+  // Plaque body with soft 3D
+  const s = size * 0.30;
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.35)';
+  ctx.shadowBlur = 6;
+  ctx.shadowOffsetY = 2;
   roundRect(ctx, px - s, py - s, s * 2, s * 2, s * 0.28);
   const fill = ctx.createLinearGradient(px, py - s, px, py + s);
-  fill.addColorStop(0, '#f0e0b0');
-  fill.addColorStop(0.45, '#e2c87a');
-  fill.addColorStop(1, '#c9a84c');
+  fill.addColorStop(0, '#f5e6b8');
+  fill.addColorStop(0.4, '#e2c87a');
+  fill.addColorStop(1, '#b8923e');
   ctx.fillStyle = fill;
   ctx.fill();
-  ctx.strokeStyle = '#8a6a28';
-  ctx.lineWidth = 1.75;
+  ctx.restore();
+
+  roundRect(ctx, px - s, py - s, s * 2, s * 2, s * 0.28);
+  ctx.strokeStyle = '#7a5a20';
+  ctx.lineWidth = 1.8;
   ctx.stroke();
 
-  // Inner rim
-  roundRect(ctx, px - s + 2, py - s + 2, s * 2 - 4, s * 2 - 4, s * 0.22);
-  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  roundRect(ctx, px - s + 2.5, py - s + 2.5, s * 2 - 5, s * 2 - 5, s * 0.2);
+  ctx.strokeStyle = 'rgba(255,255,255,0.4)';
   ctx.lineWidth = 1;
   ctx.stroke();
 
-  // Text — always screen-upright
   ctx.fillStyle = '#3a2a10';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -401,19 +1101,7 @@ function drawOfficialHarbor(
   ctx.restore();
 }
 
-function roundRect(
-  ctx: CanvasRenderingContext2D,
-  x: number, y: number, w: number, h: number, r: number,
-) {
-  const rr = Math.min(r, w / 2, h / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + rr, y);
-  ctx.arcTo(x + w, y, x + w, y + h, rr);
-  ctx.arcTo(x + w, y + h, x, y + h, rr);
-  ctx.arcTo(x, y + h, x, y, rr);
-  ctx.arcTo(x, y, x + w, y, rr);
-  ctx.closePath();
-}
+/* ─── Intersection / edge helpers ──────────────────────────────────── */
 
 function buildIntersectionPositions(
   board: { q: number; r: number }[],
@@ -435,14 +1123,18 @@ function buildIntersectionPositions(
   return map;
 }
 
-function loadImage(src: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = reject;
-    img.src = src;
-  });
+function shadesFor(color: string) {
+  const key = Object.keys(PLAYER_COLORS).find(k => PLAYER_COLORS[k] === color);
+  if (key && PLAYER_SHADE[key]) return PLAYER_SHADE[key];
+  return {
+    mid: color,
+    dark: shadeHex(color, -0.25),
+    light: shadeHex(color, 0.2),
+    edge: shadeHex(color, -0.4),
+  };
 }
+
+/* ─── Component ────────────────────────────────────────────────────── */
 
 export default function Board({
   gameState,
@@ -458,9 +1150,6 @@ export default function Board({
   const containerRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [assetsReady, setAssetsReady] = useState(0);
-  const imagesRef = useRef<Record<string, HTMLImageElement | null>>({});
-  const robberRef = useRef<HTMLImageElement | null>(null);
   const lastTouch = useRef<{ x: number; y: number } | null>(null);
   const lastPinchDist = useRef<number | null>(null);
   const dragStart = useRef<{ x: number; y: number } | null>(null);
@@ -470,30 +1159,6 @@ export default function Board({
 
   const CANVAS_W = hexSize * 12;
   const CANVAS_H = hexSize * 11;
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const entries = await Promise.all(
-        Object.entries(HEX_IMAGES).map(async ([k, src]) => {
-          try {
-            return [k, await loadImage(src)] as const;
-          } catch {
-            return [k, null] as const;
-          }
-        }),
-      );
-      if (cancelled) return;
-      entries.forEach(([k, img]) => { imagesRef.current[k] = img; });
-      try {
-        robberRef.current = await loadImage(ROBBER_IMG);
-      } catch {
-        robberRef.current = null;
-      }
-      setAssetsReady(n => n + 1);
-    })();
-    return () => { cancelled = true; };
-  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -507,6 +1172,10 @@ export default function Board({
     canvas.style.width = `${CANVAS_W}px`;
     canvas.style.height = `${CANVAS_H}px`;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // Crisp text + shapes
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
 
     const W = CANVAS_W;
     const H = CANVAS_H;
@@ -530,17 +1199,17 @@ export default function Board({
       drawWaterHex(ctx, x + W / 2, y + H / 2, hexSize);
     });
 
+    // Land hexes — high-quality procedural 2D
     gameState.board.forEach(tile => {
       const { x, y } = hexToPixel(tile.q, tile.r, hexSize);
-      drawHexWithImage(
+      drawTerrainHex(
         ctx, x + W / 2, y + H / 2, hexSize,
-        imagesRef.current[tile.type] || null,
         tile.type,
         !!tile.hasRobber,
       );
     });
 
-    // Official-style harbors on the sea frame (see physical Catan board).
+    // Harbors
     if (gameState.ports?.length) {
       const boardCx = W / 2;
       const boardCy = H / 2;
@@ -549,38 +1218,36 @@ export default function Board({
         const pa = positions.get(ikA);
         const pb = positions.get(ikB);
         if (!pa || !pb) return;
-
-        const ax = pa.x + boardCx;
-        const ay = pa.y + boardCy;
-        const bx = pb.x + boardCx;
-        const by = pb.y + boardCy;
-
-        // Plaque is placed by pushing the edge midpoint OUTWARD from the board
-        // center — this always lands in the water ring, regardless of which
-        // hex the edge faces (some coastal edges face land, not water).
-        drawOfficialHarbor(ctx, ax, ay, bx, by, boardCx, boardCy, hexSize, port.type);
+        drawOfficialHarbor(
+          ctx,
+          pa.x + boardCx, pa.y + boardCy,
+          pb.x + boardCx, pb.y + boardCy,
+          boardCx, boardCy, hexSize, port.type,
+        );
       });
     }
 
+    // Roads (under buildings)
     Object.values(gameState.edges).forEach((edge: Edge) => {
       const a = positions.get(edge.from);
       const b = positions.get(edge.to);
       if (!a || !b) return;
       const ax = a.x + W / 2, ay = a.y + H / 2;
       const bx = b.x + W / 2, by = b.y + H / 2;
-      // Highlight empty edges when a road is being placed, so they're tappable.
       const placingRoad = gameState.setupPhase
         ? gameState.phase === 'setup_road'
         : gameState.phase === 'build' && selectedAction === 'road';
       if (!edge.road && placingRoad) {
         ctx.save();
-        ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
         ctx.lineWidth = Math.max(8, hexSize * 0.18);
         ctx.lineCap = 'round';
+        ctx.setLineDash([6, 6]);
         ctx.beginPath();
         ctx.moveTo(ax, ay);
         ctx.lineTo(bx, by);
         ctx.stroke();
+        ctx.setLineDash([]);
         ctx.restore();
       }
       if (edge.road) {
@@ -588,6 +1255,7 @@ export default function Board({
       }
     });
 
+    // Buildings
     Object.values(gameState.intersections).forEach((inter: Intersection) => {
       const pos = positions.get(inter.key);
       if (!pos) return;
@@ -599,34 +1267,34 @@ export default function Board({
         drawSettlement(ctx, cx, cy, PLAYER_COLORS[inter.owner || ''] || '#666', hexSize);
       } else if (selectedAction === 'settlement' || selectedAction === 'city' || gameState.setupPhase) {
         ctx.beginPath();
-        ctx.arc(cx, cy, Math.max(4, hexSize * 0.08), 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        ctx.arc(cx, cy, Math.max(4, hexSize * 0.09), 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.4)';
         ctx.fill();
-        ctx.strokeStyle = 'rgba(255,255,255,0.55)';
-        ctx.lineWidth = 1;
+        ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+        ctx.lineWidth = 1.5;
         ctx.stroke();
       }
     });
 
+    // Numbers + robber (on top)
     gameState.board.forEach(tile => {
       const { x, y } = hexToPixel(tile.q, tile.r, hexSize);
       const cx = x + W / 2;
       const cy = y + H / 2;
       if (tile.hasRobber) {
-        drawRobber(ctx, cx, cy, hexSize, robberRef.current);
+        drawRobber(ctx, cx, cy, hexSize);
       } else if (tile.number) {
         drawNumberToken(ctx, cx, cy + hexSize * 0.02, hexSize, tile.number);
       }
     });
 
-    // --- DEBUG BOARD MODE: overlay the underlying graph model ---
+    // Debug overlay
     if (debug) {
       ctx.save();
       ctx.font = `bold ${Math.max(9, hexSize * 0.16)}px monospace`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
 
-      // Edge IDs (midpoint of each edge)
       Object.values(gameState.edges).forEach((edge: Edge) => {
         const a = positions.get(edge.from);
         const b = positions.get(edge.to);
@@ -639,7 +1307,6 @@ export default function Board({
         ctx.fillText(edge.key, mx, my);
       });
 
-      // Intersection dots + IDs
       Object.values(gameState.intersections).forEach((inter: Intersection) => {
         const pos = positions.get(inter.key);
         if (!pos) return;
@@ -656,7 +1323,6 @@ export default function Board({
         ctx.fillText(inter.key, cx, cy - hexSize * 0.22);
       });
 
-      // Hex IDs + axial coords
       gameState.board.forEach(tile => {
         const { x, y } = hexToPixel(tile.q, tile.r, hexSize);
         const cx = x + W / 2;
@@ -669,7 +1335,6 @@ export default function Board({
         ctx.fillText(tile.type, cx, cy + 12);
       });
 
-      // Harbor IDs
       gameState.ports.forEach(port => {
         const [ikA, ikB] = getPortIntersections(port);
         const pa = positions.get(ikA);
@@ -685,7 +1350,7 @@ export default function Board({
 
       ctx.restore();
     }
-  }, [gameState, hexSize, CANVAS_W, CANVAS_H, selectedAction, assetsReady, debug]);
+  }, [gameState, hexSize, CANVAS_W, CANVAS_H, selectedAction, debug]);
 
   const screenToCanvas = useCallback((screenX: number, screenY: number) => {
     const container = containerRef.current;
