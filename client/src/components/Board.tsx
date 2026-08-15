@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
-import type { GameState, Intersection, Edge } from '../game/types';
+import type { GameState, Intersection, Edge, Player } from '../game/types';
 import { hexToPixel, pixelToHex, getHexCorners, getPortIntersections } from '../game/board';
 
 const PLAYER_COLORS: Record<string, string> = {
@@ -9,13 +9,16 @@ const PLAYER_COLORS: Record<string, string> = {
   orange: '#f57c00',
 };
 
-/** High-quality painted hex textures (primary terrain art). */
+/** High-quality painted hex textures (primary terrain art).
+ *  Ore intentionally omitted — the ore PNG is a cold plastic crater that
+ *  fights the painted board look; procedural mountains look better.
+ */
 const HEX_IMAGES: Record<string, string> = {
   lumber: '/assets/hex-lumber.png',
   brick: '/assets/hex-brick.png',
   wool: '/assets/hex-wool.png',
   grain: '/assets/hex-grain.png',
-  ore: '/assets/hex-ore.png',
+  // ore: skipped on purpose
   desert: '/assets/hex-desert.png',
 };
 
@@ -45,7 +48,7 @@ const TERRAIN: Record<string, {
   brick:  { base: '#c4784a', mid: '#a85e38', deep: '#7a3f22', accent: '#e0a078', rim: '#5c2e18', label: 'Hills' },
   wool:   { base: '#8fbc5a', mid: '#6f9a40', deep: '#4a6e28', accent: '#c5e08a', rim: '#3a5520', label: 'Pasture' },
   grain:  { base: '#e0b84a', mid: '#c9a030', deep: '#8a6e18', accent: '#f5d878', rim: '#6a5410', label: 'Fields' },
-  ore:    { base: '#8a8f95', mid: '#6a6f75', deep: '#454a50', accent: '#b8bdc4', rim: '#2e3236', label: 'Mountains' },
+  ore:    { base: '#7a7f88', mid: '#5c616a', deep: '#3a3f48', accent: '#a8b0ba', rim: '#2a2e34', label: 'Mountains' },
   desert: { base: '#e8d5a3', mid: '#d4bf88', deep: '#b09a68', accent: '#f5e8c8', rim: '#8a7648', label: 'Desert' },
 };
 
@@ -330,67 +333,88 @@ function drawSeaFrame(
 ) {
   const cx = W / 2;
   const cy = H / 2;
-  const R = size * 5.35;
+  const R = size * 5.4;
 
   // Soft table shadow under the ocean
   ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.45)';
-  ctx.shadowBlur = 28;
-  ctx.shadowOffsetY = 8;
+  ctx.shadowColor = 'rgba(0,0,0,0.5)';
+  ctx.shadowBlur = 32;
+  ctx.shadowOffsetY = 10;
   ctx.beginPath();
   ctx.arc(cx, cy, R, 0, Math.PI * 2);
-  ctx.fillStyle = '#0d3a5c';
+  ctx.fillStyle = '#0a3050';
   ctx.fill();
   ctx.restore();
 
   // Deep ocean disc with rich blues
-  const g = ctx.createRadialGradient(cx - size * 0.45, cy - size * 0.5, size * 0.8, cx, cy, R);
-  g.addColorStop(0, '#7ec8ef');
-  g.addColorStop(0.22, '#3aa0d8');
-  g.addColorStop(0.5, '#1f7fbe');
-  g.addColorStop(0.78, '#155f96');
-  g.addColorStop(1, '#0c3d68');
+  const g = ctx.createRadialGradient(cx - size * 0.5, cy - size * 0.55, size * 0.6, cx, cy, R);
+  g.addColorStop(0, '#9ad4f5');
+  g.addColorStop(0.18, '#4eb0e0');
+  g.addColorStop(0.42, '#2688c4');
+  g.addColorStop(0.68, '#1768a0');
+  g.addColorStop(0.88, '#0e4a78');
+  g.addColorStop(1, '#083456');
   ctx.beginPath();
   ctx.arc(cx, cy, R, 0, Math.PI * 2);
   ctx.fillStyle = g;
   ctx.fill();
 
-  // Concentric wave shimmer
+  // Depth bands
   ctx.save();
-  ctx.globalAlpha = 0.14;
-  ctx.strokeStyle = '#e8f7ff';
-  for (let i = 0; i < 8; i++) {
-    ctx.lineWidth = 1.2 + (i % 2);
+  for (let i = 0; i < 10; i++) {
+    ctx.globalAlpha = 0.06 + (i % 3) * 0.02;
+    ctx.strokeStyle = i % 2 === 0 ? '#e8f7ff' : '#0a3a60';
+    ctx.lineWidth = 1.4 + (i % 2);
     ctx.beginPath();
-    ctx.arc(cx + Math.sin(i) * 4, cy + Math.cos(i) * 3, size * (2.35 + i * 0.36), 0, Math.PI * 2);
+    ctx.arc(
+      cx + Math.sin(i * 0.7) * 6,
+      cy + Math.cos(i * 0.5) * 5,
+      size * (2.2 + i * 0.32),
+      0, Math.PI * 2,
+    );
     ctx.stroke();
+  }
+  ctx.restore();
+
+  // Sparkle flecks on outer sea
+  ctx.save();
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  for (let i = 0; i < 36; i++) {
+    const a = (i / 36) * Math.PI * 2 + 0.3;
+    const rr = size * (3.9 + (i % 5) * 0.18);
+    const x = cx + Math.cos(a) * rr;
+    const y = cy + Math.sin(a) * rr * 0.92;
+    ctx.globalAlpha = 0.15 + (i % 4) * 0.06;
+    ctx.beginPath();
+    ctx.arc(x, y, 1.2 + (i % 3) * 0.4, 0, Math.PI * 2);
+    ctx.fill();
   }
   ctx.restore();
 
   // Foam ring near island
   ctx.save();
-  ctx.strokeStyle = 'rgba(255,255,255,0.22)';
-  ctx.lineWidth = size * 0.07;
+  ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+  ctx.lineWidth = size * 0.08;
   ctx.beginPath();
-  ctx.arc(cx, cy, size * 3.58, 0, Math.PI * 2);
+  ctx.arc(cx, cy, size * 3.62, 0, Math.PI * 2);
   ctx.stroke();
   // Sandy beach
-  ctx.strokeStyle = 'rgba(236, 214, 164, 0.85)';
-  ctx.lineWidth = size * 0.28;
+  ctx.strokeStyle = 'rgba(236, 214, 164, 0.9)';
+  ctx.lineWidth = size * 0.3;
   ctx.lineCap = 'round';
   ctx.beginPath();
   ctx.arc(cx, cy, size * 3.48, 0, Math.PI * 2);
   ctx.stroke();
-  ctx.strokeStyle = 'rgba(255, 248, 225, 0.4)';
-  ctx.lineWidth = size * 0.09;
+  ctx.strokeStyle = 'rgba(255, 248, 225, 0.45)';
+  ctx.lineWidth = size * 0.1;
   ctx.beginPath();
-  ctx.arc(cx, cy, size * 3.38, 0, Math.PI * 2);
+  ctx.arc(cx, cy, size * 3.36, 0, Math.PI * 2);
   ctx.stroke();
   // Dark wet sand edge
-  ctx.strokeStyle = 'rgba(90, 70, 40, 0.35)';
-  ctx.lineWidth = size * 0.04;
+  ctx.strokeStyle = 'rgba(90, 70, 40, 0.4)';
+  ctx.lineWidth = size * 0.045;
   ctx.beginPath();
-  ctx.arc(cx, cy, size * 3.28, 0, Math.PI * 2);
+  ctx.arc(cx, cy, size * 3.24, 0, Math.PI * 2);
   ctx.stroke();
   ctx.restore();
 }
@@ -398,11 +422,11 @@ function drawSeaFrame(
 function drawWaterHex(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number) {
   const pts = hexCorners(cx, cy, size * 1.02);
   fillHexPath(ctx, pts);
-  const g = ctx.createRadialGradient(cx - size * 0.28, cy - size * 0.3, size * 0.05, cx, cy, size * 1.05);
-  g.addColorStop(0, '#8fd4f5');
-  g.addColorStop(0.35, '#4aadde');
-  g.addColorStop(0.75, '#2380b8');
-  g.addColorStop(1, '#145a8a');
+  const g = ctx.createRadialGradient(cx - size * 0.3, cy - size * 0.32, size * 0.04, cx, cy, size * 1.08);
+  g.addColorStop(0, '#a8dff8');
+  g.addColorStop(0.28, '#55b6e4');
+  g.addColorStop(0.62, '#2a8ec8');
+  g.addColorStop(1, '#145a90');
   ctx.fillStyle = g;
   ctx.fill();
 
@@ -410,30 +434,45 @@ function drawWaterHex(ctx: CanvasRenderingContext2D, cx: number, cy: number, siz
   fillHexPath(ctx, pts);
   ctx.clip();
   // Wave bands
-  ctx.globalAlpha = 0.2;
+  ctx.globalAlpha = 0.24;
   ctx.strokeStyle = '#eef9ff';
-  ctx.lineWidth = 1.6;
-  for (let i = 0; i < 4; i++) {
+  ctx.lineWidth = 1.7;
+  for (let i = 0; i < 5; i++) {
     ctx.beginPath();
-    ctx.arc(cx - size * 0.12, cy + size * (0.0 + i * 0.16), size * (0.3 + i * 0.1), 0.15, Math.PI - 0.15);
+    ctx.arc(cx - size * 0.1, cy + size * (-0.05 + i * 0.15), size * (0.28 + i * 0.09), 0.12, Math.PI - 0.12);
     ctx.stroke();
   }
+  // Foam crest near top edge
+  ctx.globalAlpha = 0.3;
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy - size * 0.35, size * 0.45, 0.4, Math.PI - 0.4);
+  ctx.stroke();
   // Specular sparkles
-  ctx.globalAlpha = 0.35;
+  ctx.globalAlpha = 0.4;
   ctx.fillStyle = '#ffffff';
-  for (let i = 0; i < 5; i++) {
-    const sx = cx + Math.sin(i * 2.1) * size * 0.35;
-    const sy = cy + Math.cos(i * 1.7) * size * 0.3;
+  for (let i = 0; i < 6; i++) {
+    const sx = cx + Math.sin(i * 2.3 + 0.5) * size * 0.38;
+    const sy = cy + Math.cos(i * 1.9) * size * 0.32;
     ctx.beginPath();
-    ctx.arc(sx, sy, size * 0.03, 0, Math.PI * 2);
+    ctx.arc(sx, sy, size * 0.028, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.restore();
 
   // Hex rim
   fillHexPath(ctx, pts);
-  ctx.strokeStyle = 'rgba(10,40,70,0.35)';
-  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = 'rgba(8,40,70,0.4)';
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+  // Light top edge
+  ctx.beginPath();
+  ctx.moveTo(pts[5].x, pts[5].y);
+  ctx.lineTo(pts[0].x, pts[0].y);
+  ctx.lineTo(pts[1].x, pts[1].y);
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.lineWidth = 1.5;
   ctx.stroke();
 }
 
@@ -464,7 +503,10 @@ function drawTerrainHex(
   ctx.save();
   ctx.clip();
 
-  if (hasArt) {
+  // Prefer painted art except ore (procedural mountains look better)
+  const useArt = hasArt && type !== 'ore';
+
+  if (useArt) {
     // Painted hex texture — full bleed, crisp
     const s = size * 2.05;
     ctx.imageSmoothingEnabled = true;
@@ -480,31 +522,35 @@ function drawTerrainHex(
     ctx.fillStyle = sheen;
     ctx.fill();
   } else {
-    // Procedural fallback while assets load / if a file fails
-    const rg = ctx.createRadialGradient(cx - size * 0.2, cy - size * 0.25, size * 0.05, cx, cy, size * 1.05);
-    rg.addColorStop(0, t.accent);
-    rg.addColorStop(0.4, t.base);
-    rg.addColorStop(1, t.mid);
-    ctx.fillStyle = rg;
-    ctx.fill();
-
-    const pattern = getTerrainPattern(ctx, type);
-    if (pattern) {
-      ctx.globalAlpha = 0.72;
-      ctx.fillStyle = pattern;
-      fillHexPath(ctx, pts);
+    // Procedural terrain (always used for ore; fallback for others)
+    if (type === 'ore') {
+      paintOreMountains(ctx, cx, cy, size, t);
+    } else {
+      const rg = ctx.createRadialGradient(cx - size * 0.2, cy - size * 0.25, size * 0.05, cx, cy, size * 1.05);
+      rg.addColorStop(0, t.accent);
+      rg.addColorStop(0.4, t.base);
+      rg.addColorStop(1, t.mid);
+      ctx.fillStyle = rg;
       ctx.fill();
+
+      const pattern = getTerrainPattern(ctx, type);
+      if (pattern) {
+        ctx.globalAlpha = 0.72;
+        ctx.fillStyle = pattern;
+        fillHexPath(ctx, pts);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+
+      ctx.globalAlpha = 0.55;
+      paintTerrainMotifs(ctx, cx, cy, size, type, t);
       ctx.globalAlpha = 1;
     }
 
-    ctx.globalAlpha = 0.55;
-    paintTerrainMotifs(ctx, cx, cy, size, type, t);
-    ctx.globalAlpha = 1;
-
     const sheen = ctx.createLinearGradient(cx - size, cy - size, cx + size * 0.5, cy + size);
-    sheen.addColorStop(0, 'rgba(255,255,255,0.28)');
-    sheen.addColorStop(0.4, 'rgba(255,255,255,0.05)');
-    sheen.addColorStop(1, 'rgba(0,0,0,0.12)');
+    sheen.addColorStop(0, 'rgba(255,255,255,0.22)');
+    sheen.addColorStop(0.4, 'rgba(255,255,255,0.04)');
+    sheen.addColorStop(1, 'rgba(0,0,0,0.14)');
     fillHexPath(ctx, pts);
     ctx.fillStyle = sheen;
     ctx.fill();
@@ -538,6 +584,111 @@ function drawTerrainHex(
     ctx.fillStyle = 'rgba(15,15,25,0.4)';
     ctx.fill();
   }
+}
+
+/** Classic Catan-style ore mountains — warm slate peaks, snow, rocky scree.
+ *  Replaces the cold plastic crater PNG. */
+function paintOreMountains(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, size: number,
+  _t: { deep: string; accent: string; mid: string; base: string },
+) {
+  // Warm slate base (not pure grey plastic)
+  const base = ctx.createRadialGradient(cx - size * 0.15, cy - size * 0.1, size * 0.1, cx, cy, size * 1.1);
+  base.addColorStop(0, '#9aa3ad');
+  base.addColorStop(0.35, '#6d7580');
+  base.addColorStop(0.7, '#4e5560');
+  base.addColorStop(1, '#353a42');
+  ctx.fillStyle = base;
+  fillHexPath(ctx, hexCorners(cx, cy, size));
+  ctx.fill();
+
+  // Rocky scree texture
+  ctx.save();
+  ctx.globalAlpha = 0.35;
+  for (let i = 0; i < 48; i++) {
+    const ang = (i * 2.4) % (Math.PI * 2);
+    const rad = ((i * 37) % 80) / 100 * size * 0.85;
+    const x = cx + Math.cos(ang) * rad * 0.9;
+    const y = cy + Math.sin(ang) * rad * 0.7 + size * 0.12;
+    ctx.fillStyle = i % 3 === 0 ? '#2c3138' : i % 3 === 1 ? '#8a929c' : '#5a616a';
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + size * 0.04, y + size * 0.02);
+    ctx.lineTo(x + size * 0.01, y + size * 0.05);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Mountain peaks (layered, warmer brown-slate)
+  const peaks: [number, number, number, string, string][] = [
+    [-0.38, 0.42, 0.62, '#3d4450', '#6a7380'],
+    [0.05, 0.55, 0.78, '#2f3640', '#5c6570'],
+    [0.36, 0.38, 0.55, '#454c58', '#7a8490'],
+    [-0.12, 0.28, 0.4, '#505860', '#8a94a0'],
+    [0.22, 0.3, 0.36, '#3a4048', '#6e7682'],
+  ];
+  for (const [ox, h, w, dark, light] of peaks) {
+    const x = cx + ox * size;
+    const baseY = cy + size * 0.42;
+    const peakY = baseY - h * size;
+    const half = w * size * 0.5;
+
+    // Right face (dark)
+    ctx.fillStyle = dark;
+    ctx.beginPath();
+    ctx.moveTo(x, peakY);
+    ctx.lineTo(x + half, baseY);
+    ctx.lineTo(x, baseY);
+    ctx.closePath();
+    ctx.fill();
+
+    // Left face (light)
+    const lg = ctx.createLinearGradient(x - half, peakY, x, baseY);
+    lg.addColorStop(0, light);
+    lg.addColorStop(1, dark);
+    ctx.fillStyle = lg;
+    ctx.beginPath();
+    ctx.moveTo(x, peakY);
+    ctx.lineTo(x - half, baseY);
+    ctx.lineTo(x, baseY);
+    ctx.closePath();
+    ctx.fill();
+
+    // Snow cap
+    ctx.fillStyle = 'rgba(245,248,255,0.88)';
+    ctx.beginPath();
+    ctx.moveTo(x, peakY);
+    ctx.lineTo(x - half * 0.28, peakY + h * size * 0.22);
+    ctx.lineTo(x + half * 0.22, peakY + h * size * 0.18);
+    ctx.closePath();
+    ctx.fill();
+
+    // Ridgeline highlight
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(x, peakY);
+    ctx.lineTo(x - half * 0.15, peakY + h * size * 0.35);
+    ctx.stroke();
+  }
+
+  // Ore veins (subtle copper/iron glints)
+  ctx.save();
+  ctx.globalAlpha = 0.45;
+  ctx.strokeStyle = '#c4a574';
+  ctx.lineWidth = Math.max(1.2, size * 0.025);
+  ctx.lineCap = 'round';
+  for (let i = 0; i < 5; i++) {
+    const x0 = cx - size * 0.35 + i * size * 0.15;
+    const y0 = cy + size * 0.05 + (i % 2) * size * 0.08;
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.quadraticCurveTo(x0 + size * 0.08, y0 - size * 0.12, x0 + size * 0.14, y0 + size * 0.06);
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 /** Distinctive terrain art painted directly onto each hex. */
@@ -743,71 +894,99 @@ function drawNumberToken(ctx: CanvasRenderingContext2D, cx: number, cy: number, 
   }
 }
 
-/* ─── Robber (painted asset preferred, 3D meeple fallback) ─────────── */
+/* ─── Robber — black wooden meeple (no white JPEG box) ─────────────── */
 
 function drawRobber(
   ctx: CanvasRenderingContext2D,
   cx: number, cy: number, size: number,
-  img: HTMLImageElement | null = null,
+  _img: HTMLImageElement | null = null,
 ) {
-  if (img && img.complete && img.naturalWidth > 0) {
-    const s = size * 0.82;
-    ctx.save();
-    ctx.shadowColor = 'rgba(0,0,0,0.4)';
-    ctx.shadowBlur = 6;
-    ctx.shadowOffsetY = 2;
-    ctx.drawImage(img, cx - s / 2, cy - s / 2, s, s);
-    ctx.restore();
-    return;
-  }
-
-  const s = size * 0.42;
+  // Always procedural: robber.png is a JPEG with opaque white bg.
+  const s = size * 0.48;
   ctx.save();
+
   // Ground shadow
-  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
   ctx.beginPath();
-  ctx.ellipse(cx + 2, cy + s * 0.72, s * 0.42, s * 0.14, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx + 1, cy + s * 0.78, s * 0.48, s * 0.16, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Body (dark grey with side shade)
-  const bodyG = ctx.createLinearGradient(cx - s * 0.4, cy, cx + s * 0.4, cy);
-  bodyG.addColorStop(0, '#1a1a1e');
-  bodyG.addColorStop(0.45, '#3a3a42');
-  bodyG.addColorStop(1, '#121216');
+  // Wooden body gradient (charcoal wood like CU robber)
+  const bodyG = ctx.createLinearGradient(cx - s * 0.45, cy, cx + s * 0.45, cy);
+  bodyG.addColorStop(0, '#0a0a0c');
+  bodyG.addColorStop(0.35, '#2a2a30');
+  bodyG.addColorStop(0.55, '#3d3d44');
+  bodyG.addColorStop(1, '#121214');
+
+  // Legs / base
+  ctx.fillStyle = bodyG;
+  ctx.beginPath();
+  ctx.moveTo(cx - s * 0.38, cy + s * 0.72);
+  ctx.lineTo(cx - s * 0.42, cy + s * 0.15);
+  ctx.lineTo(cx + s * 0.42, cy + s * 0.15);
+  ctx.lineTo(cx + s * 0.38, cy + s * 0.72);
+  ctx.closePath();
+  ctx.fill();
+  // Leg notch
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.beginPath();
+  ctx.moveTo(cx - s * 0.06, cy + s * 0.72);
+  ctx.lineTo(cx, cy + s * 0.38);
+  ctx.lineTo(cx + s * 0.06, cy + s * 0.72);
+  ctx.closePath();
+  ctx.fill();
 
   // Torso
   ctx.fillStyle = bodyG;
   ctx.beginPath();
-  ctx.moveTo(cx - s * 0.32, cy + s * 0.55);
-  ctx.lineTo(cx - s * 0.38, cy - s * 0.05);
-  ctx.quadraticCurveTo(cx, cy - s * 0.25, cx + s * 0.38, cy - s * 0.05);
-  ctx.lineTo(cx + s * 0.32, cy + s * 0.55);
+  ctx.moveTo(cx - s * 0.4, cy + s * 0.2);
+  ctx.lineTo(cx - s * 0.36, cy - s * 0.28);
+  ctx.quadraticCurveTo(cx, cy - s * 0.38, cx + s * 0.36, cy - s * 0.28);
+  ctx.lineTo(cx + s * 0.4, cy + s * 0.2);
   ctx.closePath();
   ctx.fill();
 
-  // Head
+  // Hood / head
   ctx.beginPath();
-  ctx.ellipse(cx, cy - s * 0.42, s * 0.28, s * 0.32, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx, cy - s * 0.42, s * 0.34, s * 0.38, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Hood peak
+  ctx.beginPath();
+  ctx.moveTo(cx - s * 0.22, cy - s * 0.55);
+  ctx.quadraticCurveTo(cx - s * 0.05, cy - s * 0.95, cx + s * 0.08, cy - s * 0.58);
+  ctx.quadraticCurveTo(cx, cy - s * 0.7, cx - s * 0.22, cy - s * 0.55);
   ctx.fill();
 
-  // Helmet ridge
-  ctx.fillStyle = '#0a0a0c';
+  // Face hollow (dark recess)
+  ctx.fillStyle = '#050506';
   ctx.beginPath();
-  ctx.ellipse(cx, cy - s * 0.55, s * 0.3, s * 0.14, 0, Math.PI, 0);
+  ctx.ellipse(cx + s * 0.02, cy - s * 0.38, s * 0.16, s * 0.18, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Eye glint
-  ctx.fillStyle = 'rgba(255,80,60,0.85)';
-  ctx.beginPath();
-  ctx.arc(cx - s * 0.08, cy - s * 0.4, s * 0.05, 0, Math.PI * 2);
-  ctx.arc(cx + s * 0.1, cy - s * 0.4, s * 0.05, 0, Math.PI * 2);
-  ctx.fill();
+  // Wood grain strokes
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 4; i++) {
+    ctx.beginPath();
+    ctx.moveTo(cx - s * 0.25, cy - s * 0.1 + i * s * 0.14);
+    ctx.quadraticCurveTo(cx, cy - s * 0.08 + i * s * 0.14, cx + s * 0.25, cy - s * 0.12 + i * s * 0.14);
+    ctx.stroke();
+  }
 
-  // Highlight edge
-  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  // Soft rim light
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
   ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.ellipse(cx - s * 0.08, cy - s * 0.42, s * 0.18, s * 0.24, -0.2, -1.2, 0.8);
+  ctx.ellipse(cx - s * 0.1, cy - s * 0.4, s * 0.2, s * 0.28, -0.25, -1.4, 0.6);
+  ctx.stroke();
+
+  // Outline
+  ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(cx - s * 0.38, cy + s * 0.72);
+  ctx.lineTo(cx - s * 0.42, cy + s * 0.15);
+  ctx.lineTo(cx - s * 0.36, cy - s * 0.28);
   ctx.stroke();
 
   ctx.restore();
@@ -1257,6 +1436,83 @@ function shadesFor(color: string) {
   };
 }
 
+/** Catan Universe–style leftover pieces tray (left edge of board). */
+function drawPieceTray(
+  ctx: CanvasRenderingContext2D,
+  players: Player[],
+  hexSize: number,
+  H: number,
+) {
+  const trayW = Math.max(72, hexSize * 1.15);
+  const pad = 10;
+  const x0 = pad;
+  const y0 = pad + 8;
+  const rowH = Math.min(110, (H - y0 * 2) / Math.max(players.length, 1));
+
+  // Tray panel
+  ctx.save();
+  roundRect(ctx, x0 - 4, y0 - 8, trayW, H - y0, 10);
+  const bg = ctx.createLinearGradient(x0, y0, x0 + trayW, H);
+  bg.addColorStop(0, 'rgba(42, 26, 12, 0.88)');
+  bg.addColorStop(1, 'rgba(22, 12, 6, 0.92)');
+  ctx.fillStyle = bg;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(200, 150, 70, 0.35)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  ctx.fillStyle = 'rgba(255, 215, 120, 0.75)';
+  ctx.font = `bold ${Math.max(9, hexSize * 0.12)}px system-ui,Segoe UI,sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText('PIECES', x0 + trayW / 2 - 2, y0 + 6);
+
+  players.forEach((p, i) => {
+    const cy = y0 + 22 + i * rowH + rowH * 0.35;
+    const color = PLAYER_COLORS[p.color] || '#888';
+
+    // Color chip + name
+    ctx.beginPath();
+    ctx.arc(x0 + 14, cy - 22, 6, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.fillStyle = '#f0e6d4';
+    ctx.font = `bold ${Math.max(9, hexSize * 0.11)}px system-ui,Segoe UI,sans-serif`;
+    ctx.textAlign = 'left';
+    const label = (p.name || p.color).slice(0, 8);
+    ctx.fillText(label, x0 + 24, cy - 18);
+
+    // Mini settlement / city / road previews with counts
+    const s = Math.min(16, hexSize * 0.22);
+    const baseX = x0 + 16;
+    const items: { kind: 'settlement' | 'city' | 'road'; n: number }[] = [
+      { kind: 'settlement', n: p.settlementsRemaining },
+      { kind: 'city', n: p.citiesRemaining },
+      { kind: 'road', n: p.roadsRemaining },
+    ];
+    items.forEach((it, j) => {
+      const ix = baseX + (j % 3) * (trayW / 3.2);
+      const iy = cy + 6;
+      if (it.kind === 'settlement') {
+        drawSettlement(ctx, ix, iy, color, s * 2.2);
+      } else if (it.kind === 'city') {
+        drawCity(ctx, ix, iy, color, s * 2.2);
+      } else {
+        drawRoad(ctx, ix - s * 0.7, iy + 2, ix + s * 0.7, iy + 2, color, s * 2.4);
+      }
+      ctx.fillStyle = '#fff8e7';
+      ctx.font = `bold ${Math.max(10, hexSize * 0.13)}px system-ui,Segoe UI,sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(String(it.n), ix, iy + s * 1.35);
+    });
+  });
+
+  ctx.restore();
+}
+
 /* ─── Component ────────────────────────────────────────────────────── */
 
 export default function Board({
@@ -1283,8 +1539,9 @@ export default function Board({
   const didPan = useRef(false);
   const posCache = useRef<Map<string, { x: number; y: number }>>(new Map());
 
-  const CANVAS_W = hexSize * 12;
+  const CANVAS_W = hexSize * 13.2;
   const CANVAS_H = hexSize * 11;
+  const BOARD_OX = hexSize * 0.55; // shift island right so piece tray sits on wood
 
   // Preload painted hex + robber assets once
   useEffect(() => {
@@ -1334,6 +1591,9 @@ export default function Board({
     posCache.current = positions;
 
     drawWoodBackground(ctx, W, H);
+    // Draw sea/board in a translated space so the piece tray has wood on the left
+    ctx.save();
+    ctx.translate(BOARD_OX, 0);
     drawSeaFrame(ctx, gameState.board, hexSize, W, H);
 
     const landKeys = new Set(gameState.board.map(t => `${t.q},${t.r}`));
@@ -1502,7 +1762,11 @@ export default function Board({
 
       ctx.restore();
     }
-  }, [gameState, hexSize, CANVAS_W, CANVAS_H, selectedAction, assetsReady, debug]);
+
+    // End board translate — tray sits on wood to the left of the island
+    ctx.restore();
+    drawPieceTray(ctx, gameState.players, hexSize, H);
+  }, [gameState, hexSize, CANVAS_W, CANVAS_H, BOARD_OX, selectedAction, assetsReady, debug]);
 
   const screenToCanvas = useCallback((screenX: number, screenY: number) => {
     const container = containerRef.current;
@@ -1522,13 +1786,15 @@ export default function Board({
     const { x, y } = screenToCanvas(clientX, clientY);
     const W = CANVAS_W;
     const H = CANVAS_H;
+    // Board content is drawn translated by BOARD_OX
+    const bx = x - BOARD_OX;
     const clickThreshold = 14 / zoom;
     const positions = posCache.current;
 
     for (const inter of Object.values(gameState.intersections)) {
       const pos = positions.get(inter.key);
       if (!pos) continue;
-      if (Math.hypot(x - (pos.x + W / 2), y - (pos.y + H / 2)) < clickThreshold) {
+      if (Math.hypot(bx - (pos.x + W / 2), y - (pos.y + H / 2)) < clickThreshold) {
         onIntersectionClick(inter.key);
         return;
       }
@@ -1540,16 +1806,16 @@ export default function Board({
       const fx = a.x + W / 2, fy = a.y + H / 2, tx = b.x + W / 2, ty = b.y + H / 2;
       const dx = tx - fx, dy = ty - fy;
       const len2 = dx * dx + dy * dy || 1;
-      let t = ((x - fx) * dx + (y - fy) * dy) / len2;
+      let t = ((bx - fx) * dx + (y - fy) * dy) / len2;
       t = Math.max(0, Math.min(1, t));
-      if (Math.hypot(x - (fx + t * dx), y - (fy + t * dy)) < clickThreshold) {
+      if (Math.hypot(bx - (fx + t * dx), y - (fy + t * dy)) < clickThreshold) {
         onEdgeClick(edge.key);
         return;
       }
     }
-    const hex = pixelToHex(x - W / 2, y - H / 2, hexSize);
+    const hex = pixelToHex(bx - W / 2, y - H / 2, hexSize);
     if (gameState.board.find(t => t.q === hex.q && t.r === hex.r)) onHexClick(hex.q, hex.r);
-  }, [gameState, hexSize, CANVAS_W, CANVAS_H, screenToCanvas, onIntersectionClick, onEdgeClick, onHexClick, zoom]);
+  }, [gameState, hexSize, CANVAS_W, CANVAS_H, BOARD_OX, screenToCanvas, onIntersectionClick, onEdgeClick, onHexClick, zoom]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     dragStart.current = { x: e.clientX, y: e.clientY };
