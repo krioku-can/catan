@@ -5,82 +5,45 @@ interface HandBarProps {
   player: Player & { _resourceCount?: number; _devCardCount?: number };
 }
 
-const RESOURCES: { type: ResourceType; label: string; color: string; emoji: string }[] = [
-  { type: 'brick', label: 'Brick', color: '#c0392b', emoji: '🧱' },
-  { type: 'lumber', label: 'Lumber', color: '#27ae60', emoji: '🪵' },
-  { type: 'wool', label: 'Wool', color: '#8bc34a', emoji: '🐑' },
-  { type: 'grain', label: 'Grain', color: '#f1c40f', emoji: '🌾' },
-  { type: 'ore', label: 'Ore', color: '#7f8c8d', emoji: '⛏️' },
+const RESOURCES: {
+  type: ResourceType;
+  label: string;
+  color: string;
+  bg: string;
+  glyph: string;
+}[] = [
+  { type: 'lumber', label: 'Lumber', color: '#1b5e20', bg: 'linear-gradient(160deg,#66bb6a,#2e7d32)', glyph: '🪵' },
+  { type: 'brick', label: 'Brick', color: '#bf360c', bg: 'linear-gradient(160deg,#ef8a5a,#c62828)', glyph: '🧱' },
+  { type: 'wool', label: 'Wool', color: '#33691e', bg: 'linear-gradient(160deg,#c5e1a5,#7cb342)', glyph: '🐑' },
+  { type: 'grain', label: 'Grain', color: '#f57f17', bg: 'linear-gradient(160deg,#ffe082,#f9a825)', glyph: '🌾' },
+  { type: 'ore', label: 'Ore', color: '#37474f', bg: 'linear-gradient(160deg,#b0bec5,#607d8b)', glyph: '⛰️' },
 ];
 
 /**
- * Always-visible compact resource strip for the current player.
- * Shows each card type with its count so the player always knows what
- * they hold without opening the Hand tab.
+ * Catan Universe–style always-visible resource strip.
+ * Icon chips + counts; floats over the board edge.
  */
 export default function HandBar({ player }: HandBarProps) {
-  // Prefer authoritative held count (includes VPs). Fall back to server stash.
   const devCount = player._devCardCount ?? countHeldDevCards(player);
   return (
-    <div style={styles.bar}>
+    <div className="hand-bar cu-hand">
       {RESOURCES.map(r => {
         const n = player.resources[r.type] || 0;
         return (
-          <div key={r.type} style={styles.res}>
-            <span style={styles.emoji}>{r.emoji}</span>
-            <span
-              style={{
-                ...styles.count,
-                color: n > 0 ? r.color : '#4a4a5e',
-                background: n > 0 ? 'rgba(255,255,255,0.08)' : 'transparent',
-              }}
-            >
-              {n}
-            </span>
+          <div
+            key={r.type}
+            className={`hand-chip ${n > 0 ? 'hand-chip-live' : 'hand-chip-empty'}`}
+            title={`${r.label}: ${n}`}
+          >
+            <span className="hand-icon" style={{ background: r.bg }}>{r.glyph}</span>
+            <span className="hand-count" style={{ color: n > 0 ? '#fff8e7' : '#6b7280' }}>{n}</span>
           </div>
         );
       })}
-      <div style={styles.dev}>
-        <span style={styles.emoji}>📜</span>
-        <span style={{ ...styles.count, color: devCount > 0 ? '#3498db' : '#4a4a5e' }}>{devCount}</span>
+      <div className={`hand-chip hand-dev ${devCount > 0 ? 'hand-chip-live' : 'hand-chip-empty'}`} title={`Dev cards: ${devCount}`}>
+        <span className="hand-icon hand-icon-dev">📜</span>
+        <span className="hand-count" style={{ color: devCount > 0 ? '#90caf9' : '#6b7280' }}>{devCount}</span>
       </div>
     </div>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  bar: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-around',
-    gap: 4,
-    padding: '5px 10px',
-    background: 'rgba(15, 52, 96, 0.92)',
-    border: '1px solid rgba(26, 26, 46, 0.8)',
-    flexShrink: 0,
-  },
-  res: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 3,
-    flex: 1,
-    justifyContent: 'center',
-  },
-  emoji: { fontSize: 16 },
-  count: {
-    fontSize: 15,
-    fontWeight: 'bold',
-    minWidth: 22,
-    textAlign: 'center',
-    borderRadius: 10,
-    padding: '1px 5px',
-  },
-  dev: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 3,
-    borderLeft: '1px solid #1a1a2e',
-    paddingLeft: 8,
-    flex: 0,
-  },
-};

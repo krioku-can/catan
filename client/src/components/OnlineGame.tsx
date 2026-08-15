@@ -7,6 +7,7 @@ import PlayerHand from './PlayerHand';
 import DiceRoller from './DiceRoller';
 import DiceFlash from './DiceFlash';
 import HandBar from './HandBar';
+import ScoreBar from './ScoreBar';
 import TradePanel from './TradePanel';
 import BuildMenu from './BuildMenu';
 import DiscardModal from './DiscardModal';
@@ -185,41 +186,36 @@ export default function OnlineGame() {
   const isMyTurn = myPlayer?.color === player.color;
   return (
     <div style={styles.container}>
-      {/* Top bar */}
+      {/* Top score bar — Catan Universe style */}
       <div style={styles.topBar}>
-        <div style={styles.turnInfo}>
-          <div style={{ ...styles.turnDot, backgroundColor: player.color }} />
-          <span style={styles.turnName}>
-            {player.name}{player.isAI ? ' 🤖' : ''}
-            {isMyTurn ? <span style={styles.youTag}> (You)</span> : ''}
-          </span>
-          <span style={styles.phaseTag}>
-            {gameState.setupPhase ? 'Setup' : gameState.phase}
-          </span>
-        </div>
-        <div style={styles.topActions}>
-          {gameState.dice && (
-            <span style={styles.diceResult}>🎲 {gameState.dice[0]}+{gameState.dice[1]}</span>
+        <ScoreBar
+          gameState={gameState}
+          myColor={myPlayer?.color}
+          currentColor={player.color}
+          dice={gameState.dice}
+          rightActions={(
+            <>
+              <button
+                className={`score-icon-btn ${muted ? '' : 'score-icon-btn-on'}`}
+                onClick={() => {
+                  const next = !muted;
+                  setMuted(next);
+                  setMutedState(next);
+                  if (!next) unlockAudio();
+                }}
+                title={muted ? 'Unmute' : 'Mute'}
+                type="button"
+              >{muted ? '🔇' : '🔊'}</button>
+              <button
+                className={`score-icon-btn ${debug ? 'score-icon-btn-on' : ''}`}
+                onClick={() => setDebug(d => !d)}
+                title="Toggle debug board overlay"
+                type="button"
+              >🔍</button>
+              <button className="score-icon-btn score-icon-btn-danger" onClick={leaveRoom} type="button">✕</button>
+            </>
           )}
-          <button
-            style={{ ...styles.leaveBtn, background: muted ? '#555' : '#333' }}
-            onClick={() => {
-              const next = !muted;
-              setMuted(next);
-              setMutedState(next);
-              if (!next) unlockAudio();
-            }}
-            title={muted ? 'Unmute' : 'Mute'}
-            type="button"
-          >{muted ? '🔇' : '🔊'}</button>
-          <button
-            style={{ ...styles.leaveBtn, background: debug ? '#2e7d32' : '#333' }}
-            onClick={() => setDebug(d => !d)}
-            title="Toggle debug board overlay"
-            type="button"
-          >🔍</button>
-          <button style={styles.leaveBtn} onClick={leaveRoom} type="button">✕</button>
-        </div>
+        />
       </div>
 
       <TurnCoach
@@ -439,21 +435,17 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     height: '100dvh',
-    background: '#1a1a2e',
-    color: '#e0e0e0',
+    background: '#3a2412',
+    color: '#f5efe4',
     fontFamily: 'Segoe UI, sans-serif',
     overflow: 'hidden',
     position: 'relative',
   },
   topBar: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '8px 12px',
-    paddingTop: 'max(8px, env(safe-area-inset-top, 0px))',
-    background: '#0f3460',
-    zIndex: 10,
     flexShrink: 0,
+    padding: 0,
+    background: 'transparent',
+    zIndex: 10,
   },
   turnInfo: {
     display: 'flex',

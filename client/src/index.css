@@ -1,4 +1,4 @@
-/* Full-viewport app shell (overrides Vite starter #root constraints) */
+/* Full-viewport app shell — Catan Universe–inspired warm table chrome */
 html,
 body,
 #root {
@@ -7,7 +7,7 @@ body,
   margin: 0;
   padding: 0;
   overflow: hidden;
-  background: #1a1a2e;
+  background: #3a2412;
 }
 
 #root {
@@ -24,10 +24,213 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
+  color: #f5efe4;
 }
 
-/*
- * Bottom chrome sits at the screen edge.
+/* ── Score bar (CU top pills) ─────────────────────────────────────── */
+.score-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  padding-top: max(6px, env(safe-area-inset-top, 0px));
+  background: linear-gradient(180deg, rgba(28, 16, 8, 0.96), rgba(42, 24, 12, 0.92));
+  border-bottom: 1px solid rgba(200, 150, 70, 0.25);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  flex-shrink: 0;
+  z-index: 40;
+}
+
+.score-bar-players {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  min-width: 0;
+}
+.score-bar-players::-webkit-scrollbar { display: none; }
+
+.score-pill {
+  --pc: #d32f2f;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 5px 10px 5px 6px;
+  border-radius: 999px;
+  background: rgba(20, 12, 6, 0.75);
+  border: 1.5px solid color-mix(in srgb, var(--pc) 55%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+  max-width: 42vw;
+}
+
+.score-pill-current {
+  border-color: var(--pc);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--pc) 70%, transparent),
+    0 0 12px color-mix(in srgb, var(--pc) 45%, transparent),
+    inset 0 1px 0 rgba(255,255,255,0.1);
+  background: color-mix(in srgb, var(--pc) 18%, rgba(20,12,6,0.9));
+}
+
+.score-pill-winner {
+  border-color: #ffd700;
+  box-shadow: 0 0 14px rgba(255, 215, 0, 0.45);
+}
+
+.score-pill-me .score-name {
+  font-weight: 700;
+}
+
+.score-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--pc);
+  box-shadow: inset 0 -2px 3px rgba(0,0,0,0.35), 0 0 0 1px rgba(0,0,0,0.25);
+  flex-shrink: 0;
+}
+
+.score-name {
+  font-size: 12px;
+  color: #f3e9d7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 88px;
+}
+
+.score-vp {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 13px;
+  font-weight: 800;
+  color: #ffd54f;
+  font-variant-numeric: tabular-nums;
+}
+
+.score-trophy { font-size: 11px; }
+
+.score-badges {
+  display: inline-flex;
+  gap: 2px;
+  font-size: 11px;
+}
+
+.score-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.score-dice {
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffe082;
+  background: rgba(0,0,0,0.35);
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,215,0,0.2);
+}
+
+.score-phase {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #b0a090;
+  background: rgba(0,0,0,0.3);
+  padding: 4px 7px;
+  border-radius: 6px;
+}
+
+.score-icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid rgba(200,150,70,0.25);
+  background: rgba(20,12,6,0.7);
+  color: #f0e6d4;
+  font-size: 14px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.score-icon-btn:active { transform: scale(0.96); }
+.score-icon-btn-on { border-color: #66bb6a; background: rgba(46,125,50,0.35); }
+.score-icon-btn-danger { border-color: rgba(229,57,53,0.5); color: #ef9a9a; }
+
+/* ── Hand bar (CU resource strip) ─────────────────────────────────── */
+.hand-bar-float {
+  position: absolute;
+  left: max(8px, env(safe-area-inset-left, 0px));
+  right: max(8px, env(safe-area-inset-right, 0px));
+  bottom: max(8px, env(safe-area-inset-bottom, 0px));
+  z-index: 8;
+  pointer-events: none;
+}
+
+.cu-hand.hand-bar,
+.hand-bar.cu-hand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 7px 10px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(32, 18, 8, 0.94), rgba(18, 10, 4, 0.96));
+  border: 1px solid rgba(200, 150, 70, 0.28);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255,255,255,0.06);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.hand-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  justify-content: center;
+  min-width: 0;
+}
+
+.hand-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  box-shadow: inset 0 -2px 3px rgba(0,0,0,0.25), 0 1px 2px rgba(0,0,0,0.3);
+  border: 1px solid rgba(255,255,255,0.18);
+}
+
+.hand-icon-dev {
+  background: linear-gradient(160deg, #5c6bc0, #283593);
+}
+
+.hand-count {
+  font-size: 15px;
+  font-weight: 800;
+  min-width: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.hand-chip-empty { opacity: 0.55; }
+.hand-chip-live { opacity: 1; }
+.hand-dev {
+  flex: 0 0 auto;
+  padding-left: 8px;
+  border-left: 1px solid rgba(255,255,255,0.1);
+}
+
+/* Bottom chrome sits at the screen edge.
  * The sheet overlays UP over the board so opening menus does not shrink the map.
  */
 .bottom-chrome {
@@ -35,6 +238,8 @@ body {
   flex-shrink: 0;
   z-index: 30;
   padding-bottom: env(safe-area-inset-bottom, 0px);
+  background: linear-gradient(180deg, rgba(28,16,8,0.95), rgba(18,10,4,0.98));
+  border-top: 1px solid rgba(200, 150, 70, 0.22);
 }
 
 /* Overlay sheet above the tab bar — board keeps full flex height */
@@ -49,15 +254,15 @@ body {
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
   touch-action: pan-y;
-  background: rgba(22, 33, 62, 0.97);
-  border-top: 1px solid #0f3460;
+  background: rgba(28, 18, 10, 0.97);
+  border-top: 1px solid rgba(200, 150, 70, 0.25);
   border-radius: 14px 14px 0 0;
-  box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.5);
   display: flex;
   flex-direction: column;
   scrollbar-gutter: stable;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
 .bottom-sheet-handle {
@@ -68,7 +273,7 @@ body {
   position: sticky;
   top: 0;
   z-index: 2;
-  background: linear-gradient(rgba(22, 33, 62, 0.98) 70%, rgba(22, 33, 62, 0));
+  background: linear-gradient(rgba(28, 18, 10, 0.98) 70%, rgba(28, 18, 10, 0));
   pointer-events: none;
 }
 
@@ -77,7 +282,7 @@ body {
   width: 40px;
   height: 4px;
   border-radius: 999px;
-  background: #4a5568;
+  background: #8a6a40;
 }
 
 .bottom-sheet-body {
@@ -90,19 +295,6 @@ body {
   min-height: min-content;
 }
 
-/* Compact resource strip floats on the board edge */
-.hand-bar-float {
-  position: absolute;
-  left: max(8px, env(safe-area-inset-left, 0px));
-  right: max(8px, env(safe-area-inset-right, 0px));
-  bottom: max(8px, env(safe-area-inset-bottom, 0px));
-  z-index: 8;
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-  pointer-events: none;
-}
-
 .board-stage {
   position: relative;
   flex: 1 1 auto;
@@ -111,6 +303,7 @@ body {
   display: flex;
   align-items: stretch;
   justify-content: center;
+  background: #4a2c14;
 }
 
 .turn-coach {
@@ -121,4 +314,12 @@ body {
   0% { transform: scale(0.6); opacity: 0; }
   60% { transform: scale(1.08); opacity: 1; }
   100% { transform: scale(1); opacity: 1; }
+}
+
+/* Mobile: slightly tighter score names */
+@media (max-width: 420px) {
+  .score-name { max-width: 64px; font-size: 11px; }
+  .score-pill { padding: 4px 8px 4px 5px; gap: 4px; }
+  .hand-icon { width: 24px; height: 24px; font-size: 13px; }
+  .hand-count { font-size: 14px; }
 }

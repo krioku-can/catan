@@ -262,39 +262,62 @@ function getTerrainPattern(
 /* ─── Background / sea ─────────────────────────────────────────────── */
 
 function drawWoodBackground(ctx: CanvasRenderingContext2D, W: number, H: number) {
-  const g = ctx.createLinearGradient(0, 0, W, H);
-  g.addColorStop(0, '#8B5A2B');
-  g.addColorStop(0.3, '#A06B3A');
-  g.addColorStop(0.65, '#8B5A2B');
-  g.addColorStop(1, '#6B3F1A');
-  ctx.fillStyle = g;
+  // Warm walnut table — CU-style
+  const base = ctx.createRadialGradient(W * 0.4, H * 0.35, W * 0.08, W * 0.5, H * 0.55, Math.max(W, H) * 0.8);
+  base.addColorStop(0, '#c4894a');
+  base.addColorStop(0.35, '#a06b35');
+  base.addColorStop(0.7, '#7a4a22');
+  base.addColorStop(1, '#4a2a12');
+  ctx.fillStyle = base;
   ctx.fillRect(0, 0, W, H);
 
-  // Plank seams
   ctx.save();
-  ctx.globalAlpha = 0.14;
-  for (let i = 0; i < 28; i++) {
-    const y = (H / 28) * i + Math.sin(i * 1.3) * 2;
-    ctx.strokeStyle = i % 2 === 0 ? '#3a200c' : '#c99658';
-    ctx.lineWidth = i % 4 === 0 ? 2.2 : 1;
+  // Horizontal planks
+  const plankH = Math.max(18, H / 22);
+  for (let i = 0; i < Math.ceil(H / plankH) + 1; i++) {
+    const y = i * plankH;
+    const warm = i % 2 === 0;
+    ctx.fillStyle = warm ? 'rgba(180,120,60,0.12)' : 'rgba(40,20,8,0.14)';
+    ctx.fillRect(0, y, W, plankH);
+
+    // Seam
+    ctx.strokeStyle = 'rgba(30,14,4,0.35)';
+    ctx.lineWidth = 1.4;
     ctx.beginPath();
     ctx.moveTo(0, y);
-    for (let x = 0; x < W; x += 16) {
-      ctx.lineTo(x, y + Math.sin(x * 0.015 + i * 0.7) * 3.5);
+    for (let x = 0; x <= W; x += 20) {
+      ctx.lineTo(x, y + Math.sin(x * 0.02 + i) * 1.8);
     }
     ctx.stroke();
-  }
-  // Vertical grain flecks
-  ctx.globalAlpha = 0.06;
-  for (let i = 0; i < 60; i++) {
-    const x = ((i * 97) % W);
-    ctx.strokeStyle = '#2a1608';
+
+    // Highlight seam
+    ctx.strokeStyle = 'rgba(230,190,120,0.08)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x + Math.sin(i) * 4, H);
+    ctx.moveTo(0, y + 1.5);
+    ctx.lineTo(W, y + 1.5);
     ctx.stroke();
   }
+
+  // Knots / grain flecks
+  for (let i = 0; i < 40; i++) {
+    const x = ((i * 137) % W);
+    const y = ((i * 89) % H);
+    ctx.globalAlpha = 0.07 + (i % 5) * 0.01;
+    ctx.strokeStyle = '#2a1408';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.ellipse(x, y, 8 + (i % 6), 3, i * 0.4, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Edge vignette
+  ctx.globalAlpha = 1;
+  const vig = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.25, W / 2, H / 2, Math.max(W, H) * 0.72);
+  vig.addColorStop(0, 'rgba(0,0,0,0)');
+  vig.addColorStop(1, 'rgba(20,8,0,0.45)');
+  ctx.fillStyle = vig;
+  ctx.fillRect(0, 0, W, H);
   ctx.restore();
 }
 
@@ -307,45 +330,67 @@ function drawSeaFrame(
 ) {
   const cx = W / 2;
   const cy = H / 2;
-  const R = size * 5.25;
+  const R = size * 5.35;
 
-  // Deep ocean disc
-  const g = ctx.createRadialGradient(cx - size * 0.3, cy - size * 0.4, size * 1.2, cx, cy, R);
-  g.addColorStop(0, 'rgba(90, 180, 230, 0.15)');
-  g.addColorStop(0.3, '#4aa8dc');
-  g.addColorStop(0.62, '#2f86c4');
-  g.addColorStop(0.88, '#1f659e');
-  g.addColorStop(1, '#154a78');
+  // Soft table shadow under the ocean
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.45)';
+  ctx.shadowBlur = 28;
+  ctx.shadowOffsetY = 8;
+  ctx.beginPath();
+  ctx.arc(cx, cy, R, 0, Math.PI * 2);
+  ctx.fillStyle = '#0d3a5c';
+  ctx.fill();
+  ctx.restore();
+
+  // Deep ocean disc with rich blues
+  const g = ctx.createRadialGradient(cx - size * 0.45, cy - size * 0.5, size * 0.8, cx, cy, R);
+  g.addColorStop(0, '#7ec8ef');
+  g.addColorStop(0.22, '#3aa0d8');
+  g.addColorStop(0.5, '#1f7fbe');
+  g.addColorStop(0.78, '#155f96');
+  g.addColorStop(1, '#0c3d68');
   ctx.beginPath();
   ctx.arc(cx, cy, R, 0, Math.PI * 2);
   ctx.fillStyle = g;
   ctx.fill();
 
-  // Subtle wave rings
+  // Concentric wave shimmer
   ctx.save();
-  ctx.globalAlpha = 0.12;
-  ctx.strokeStyle = '#dff4ff';
-  for (let i = 0; i < 5; i++) {
-    ctx.lineWidth = 1.5;
+  ctx.globalAlpha = 0.14;
+  ctx.strokeStyle = '#e8f7ff';
+  for (let i = 0; i < 8; i++) {
+    ctx.lineWidth = 1.2 + (i % 2);
     ctx.beginPath();
-    ctx.arc(cx, cy, size * (2.6 + i * 0.45), 0, Math.PI * 2);
+    ctx.arc(cx + Math.sin(i) * 4, cy + Math.cos(i) * 3, size * (2.35 + i * 0.36), 0, Math.PI * 2);
     ctx.stroke();
   }
   ctx.restore();
 
-  // Sandy beach ring
+  // Foam ring near island
   ctx.save();
-  ctx.strokeStyle = 'rgba(236, 214, 164, 0.7)';
-  ctx.lineWidth = size * 0.26;
+  ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+  ctx.lineWidth = size * 0.07;
+  ctx.beginPath();
+  ctx.arc(cx, cy, size * 3.58, 0, Math.PI * 2);
+  ctx.stroke();
+  // Sandy beach
+  ctx.strokeStyle = 'rgba(236, 214, 164, 0.85)';
+  ctx.lineWidth = size * 0.28;
   ctx.lineCap = 'round';
   ctx.beginPath();
-  ctx.arc(cx, cy, size * 3.52, 0, Math.PI * 2);
+  ctx.arc(cx, cy, size * 3.48, 0, Math.PI * 2);
   ctx.stroke();
-  // Inner beach highlight
-  ctx.strokeStyle = 'rgba(255, 245, 220, 0.35)';
-  ctx.lineWidth = size * 0.08;
+  ctx.strokeStyle = 'rgba(255, 248, 225, 0.4)';
+  ctx.lineWidth = size * 0.09;
   ctx.beginPath();
-  ctx.arc(cx, cy, size * 3.42, 0, Math.PI * 2);
+  ctx.arc(cx, cy, size * 3.38, 0, Math.PI * 2);
+  ctx.stroke();
+  // Dark wet sand edge
+  ctx.strokeStyle = 'rgba(90, 70, 40, 0.35)';
+  ctx.lineWidth = size * 0.04;
+  ctx.beginPath();
+  ctx.arc(cx, cy, size * 3.28, 0, Math.PI * 2);
   ctx.stroke();
   ctx.restore();
 }
@@ -353,25 +398,43 @@ function drawSeaFrame(
 function drawWaterHex(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number) {
   const pts = hexCorners(cx, cy, size * 1.02);
   fillHexPath(ctx, pts);
-  const g = ctx.createRadialGradient(cx - size * 0.25, cy - size * 0.25, size * 0.08, cx, cy, size);
-  g.addColorStop(0, '#6ec4ef');
-  g.addColorStop(0.45, '#3a9ad9');
-  g.addColorStop(1, '#1f6fad');
+  const g = ctx.createRadialGradient(cx - size * 0.28, cy - size * 0.3, size * 0.05, cx, cy, size * 1.05);
+  g.addColorStop(0, '#8fd4f5');
+  g.addColorStop(0.35, '#4aadde');
+  g.addColorStop(0.75, '#2380b8');
+  g.addColorStop(1, '#145a8a');
   ctx.fillStyle = g;
   ctx.fill();
 
-  // Soft wave arcs
   ctx.save();
+  fillHexPath(ctx, pts);
   ctx.clip();
-  ctx.globalAlpha = 0.18;
-  ctx.strokeStyle = '#e8f7ff';
-  ctx.lineWidth = 1.5;
-  for (let i = 0; i < 3; i++) {
+  // Wave bands
+  ctx.globalAlpha = 0.2;
+  ctx.strokeStyle = '#eef9ff';
+  ctx.lineWidth = 1.6;
+  for (let i = 0; i < 4; i++) {
     ctx.beginPath();
-    ctx.arc(cx - size * 0.1, cy + size * (0.05 + i * 0.18), size * (0.35 + i * 0.1), 0.2, Math.PI - 0.2);
+    ctx.arc(cx - size * 0.12, cy + size * (0.0 + i * 0.16), size * (0.3 + i * 0.1), 0.15, Math.PI - 0.15);
     ctx.stroke();
   }
+  // Specular sparkles
+  ctx.globalAlpha = 0.35;
+  ctx.fillStyle = '#ffffff';
+  for (let i = 0; i < 5; i++) {
+    const sx = cx + Math.sin(i * 2.1) * size * 0.35;
+    const sy = cy + Math.cos(i * 1.7) * size * 0.3;
+    ctx.beginPath();
+    ctx.arc(sx, sy, size * 0.03, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.restore();
+
+  // Hex rim
+  fillHexPath(ctx, pts);
+  ctx.strokeStyle = 'rgba(10,40,70,0.35)';
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
 }
 
 /* ─── High-quality 2D hex tiles (painted assets + procedural fallback) ── */
@@ -620,13 +683,13 @@ function paintTerrainMotifs(
 /* ─── Number tokens ────────────────────────────────────────────────── */
 
 function drawNumberToken(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number, num: number) {
-  const r = size * 0.30;
+  const r = size * 0.32;
 
   // Token shadow
   ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.4)';
-  ctx.shadowBlur = 5;
-  ctx.shadowOffsetY = 2;
+  ctx.shadowColor = 'rgba(0,0,0,0.45)';
+  ctx.shadowBlur = 7;
+  ctx.shadowOffsetY = 2.5;
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
   ctx.fillStyle = '#f4efe0';
@@ -634,38 +697,44 @@ function drawNumberToken(ctx: CanvasRenderingContext2D, cx: number, cy: number, 
   ctx.restore();
 
   // Ceramic disc with radial sheen
-  const g = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.35, r * 0.1, cx, cy, r);
-  g.addColorStop(0, '#fffaf0');
-  g.addColorStop(0.55, '#f0e8d4');
-  g.addColorStop(1, '#d9cfb4');
+  const g = ctx.createRadialGradient(cx - r * 0.35, cy - r * 0.4, r * 0.08, cx, cy, r);
+  g.addColorStop(0, '#fffdf6');
+  g.addColorStop(0.5, '#f2ead4');
+  g.addColorStop(0.85, '#e0d4b4');
+  g.addColorStop(1, '#c9bb95');
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
   ctx.fillStyle = g;
   ctx.fill();
 
-  // Outer ring
-  ctx.strokeStyle = '#a89468';
-  ctx.lineWidth = 2.2;
+  // Thick outer ring (like CU tokens)
+  ctx.strokeStyle = '#8a7348';
+  ctx.lineWidth = 2.6;
   ctx.stroke();
-  // Inner ring
   ctx.beginPath();
-  ctx.arc(cx, cy, r * 0.86, 0, Math.PI * 2);
-  ctx.strokeStyle = 'rgba(255,255,255,0.45)';
-  ctx.lineWidth = 1.2;
+  ctx.arc(cx, cy, r * 0.88, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+  ctx.lineWidth = 1.3;
+  ctx.stroke();
+  // Inner dark track
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.78, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(90,70,40,0.18)';
+  ctx.lineWidth = 1;
   ctx.stroke();
 
   const isHot = num === 6 || num === 8;
-  ctx.fillStyle = isHot ? '#c62828' : '#1e1e1e';
-  ctx.font = `bold ${size * 0.34}px Georgia, 'Times New Roman', serif`;
+  ctx.fillStyle = isHot ? '#c62828' : '#1a1a1a';
+  ctx.font = `bold ${size * 0.36}px Georgia, 'Times New Roman', serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(String(num), cx, cy - r * 0.08);
+  ctx.fillText(String(num), cx, cy - r * 0.1);
 
   const pips = num <= 7 ? num - 1 : 13 - num;
-  const pipR = Math.max(1.3, size * 0.038);
-  ctx.fillStyle = isHot ? '#c62828' : '#3a3a3a';
-  const pipY = cy + r * 0.48;
-  const spacing = pipR * 2.9;
+  const pipR = Math.max(1.4, size * 0.04);
+  ctx.fillStyle = isHot ? '#c62828' : '#333';
+  const pipY = cy + r * 0.5;
+  const spacing = pipR * 2.85;
   const startX = cx - ((pips - 1) * spacing) / 2;
   for (let p = 0; p < pips; p++) {
     ctx.beginPath();
@@ -1117,38 +1186,40 @@ function drawOfficialHarbor(
   ctx.lineTo(bx, by);
   ctx.stroke();
 
-  // Plaque body with soft 3D
-  const s = size * 0.30;
+  // Plaque body with soft 3D — round dock token (CU style)
+  const s = size * 0.32;
   ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.35)';
-  ctx.shadowBlur = 6;
+  ctx.shadowColor = 'rgba(0,0,0,0.4)';
+  ctx.shadowBlur = 7;
   ctx.shadowOffsetY = 2;
-  roundRect(ctx, px - s, py - s, s * 2, s * 2, s * 0.28);
-  const fill = ctx.createLinearGradient(px, py - s, px, py + s);
-  fill.addColorStop(0, '#f5e6b8');
-  fill.addColorStop(0.4, '#e2c87a');
-  fill.addColorStop(1, '#b8923e');
+  ctx.beginPath();
+  ctx.arc(px, py, s, 0, Math.PI * 2);
+  const fill = ctx.createRadialGradient(px - s * 0.3, py - s * 0.35, s * 0.1, px, py, s);
+  fill.addColorStop(0, '#fff6d0');
+  fill.addColorStop(0.45, '#e8c86a');
+  fill.addColorStop(1, '#a87828');
   ctx.fillStyle = fill;
   ctx.fill();
   ctx.restore();
 
-  roundRect(ctx, px - s, py - s, s * 2, s * 2, s * 0.28);
-  ctx.strokeStyle = '#7a5a20';
-  ctx.lineWidth = 1.8;
+  ctx.beginPath();
+  ctx.arc(px, py, s, 0, Math.PI * 2);
+  ctx.strokeStyle = '#6a4a18';
+  ctx.lineWidth = 2.2;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(px, py, s * 0.82, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+  ctx.lineWidth = 1.2;
   ctx.stroke();
 
-  roundRect(ctx, px - s + 2.5, py - s + 2.5, s * 2 - 5, s * 2 - 5, s * 0.2);
-  ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-
-  ctx.fillStyle = '#3a2a10';
+  ctx.fillStyle = '#2a1c08';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.font = `bold ${Math.max(10, size * 0.135)}px system-ui,Segoe UI,Arial`;
+  ctx.font = `bold ${Math.max(10, size * 0.14)}px system-ui,Segoe UI,Arial`;
   ctx.fillText(ratio, px, py - s * 0.28);
-  ctx.font = `bold ${Math.max(12, size * 0.17)}px system-ui,Segoe UI,Arial`;
-  ctx.fillText(icon, px, py + s * 0.3);
+  ctx.font = `bold ${Math.max(12, size * 0.18)}px system-ui,Segoe UI,Arial`;
+  ctx.fillText(icon, px, py + s * 0.28);
 
   ctx.restore();
 }
