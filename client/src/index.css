@@ -180,54 +180,63 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 4px;
-  padding: 7px 10px;
+  padding: 8px 12px;
   border-radius: 14px;
-  background: linear-gradient(180deg, rgba(32, 18, 8, 0.94), rgba(18, 10, 4, 0.96));
-  border: 1px solid rgba(200, 150, 70, 0.28);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255,255,255,0.06);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  background: #1a1008;
+  border: 1px solid rgba(200, 150, 70, 0.35);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255,255,255,0.06);
 }
 
 .hand-chip {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   flex: 1;
   justify-content: center;
   min-width: 0;
 }
 
 .hand-icon {
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  box-shadow: inset 0 -2px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.35);
+  border: 1.5px solid rgba(255,255,255,0.2);
+  flex-shrink: 0;
+}
+
+.hand-mark {
   font-size: 14px;
-  box-shadow: inset 0 -2px 3px rgba(0,0,0,0.25), 0 1px 2px rgba(0,0,0,0.3);
-  border: 1px solid rgba(255,255,255,0.18);
+  line-height: 1;
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.35));
 }
 
 .hand-icon-dev {
-  background: linear-gradient(160deg, #5c6bc0, #283593);
+  background: linear-gradient(160deg, #5c6bc0, #283593) !important;
+  border-color: #1a237e !important;
 }
 
 .hand-count {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 800;
   min-width: 16px;
   text-align: center;
   font-variant-numeric: tabular-nums;
+  color: #fff8e7;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.6);
 }
 
-.hand-chip-empty { opacity: 0.55; }
+.hand-count-dev { color: #90caf9; }
+
+.hand-chip-empty { opacity: 0.5; }
 .hand-chip-live { opacity: 1; }
 .hand-dev {
   flex: 0 0 auto;
   padding-left: 8px;
-  border-left: 1px solid rgba(255,255,255,0.1);
+  border-left: 1px solid rgba(255,255,255,0.12);
 }
 
 /* Bottom chrome sits at the screen edge.

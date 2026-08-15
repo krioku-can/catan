@@ -1099,11 +1099,14 @@ const styles: Record<string, React.CSSProperties> = {
   },
   stealDot: { width: 14, height: 14, borderRadius: '50%', flexShrink: 0 },
   tabBar: {
-    display: 'flex', background: '#0f3460', borderTop: '1px solid #1a1a2e', flexShrink: 0,
+    display: 'flex',
+    background: 'linear-gradient(180deg, #2a1810, #1a1008)',
+    borderTop: '1px solid rgba(200,150,70,0.25)',
+    flexShrink: 0,
   },
   tab: {
     flex: 1, padding: '10px 4px', border: 'none', background: 'transparent',
-    color: '#8890a0', fontSize: 12, fontWeight: 'bold', cursor: 'pointer',
+    color: '#b0a090', fontSize: 12, fontWeight: 'bold', cursor: 'pointer',
   },
   tabActive: { color: '#ffd700', borderBottom: '2px solid #ffd700' },
   setupMsg: { textAlign: 'center', color: '#8890a0', fontSize: 14, padding: 16 },

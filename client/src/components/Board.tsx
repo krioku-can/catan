@@ -512,7 +512,7 @@ function drawTerrainHex(
 
   ctx.restore();
 
-  // Beveled edges
+  // Beveled edges — subtler so painted art isn't framed in harsh white
   ctx.save();
   for (let i = 0; i < 6; i++) {
     const a = pts[i];
@@ -522,14 +522,14 @@ function drawTerrainHex(
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
-    ctx.strokeStyle = isTop ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.4)';
-    ctx.lineWidth = isTop ? 2.4 : 2.6;
+    ctx.strokeStyle = isTop ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.35)';
+    ctx.lineWidth = isTop ? 1.6 : 2.0;
     ctx.lineCap = 'round';
     ctx.stroke();
   }
   fillHexPath(ctx, pts);
-  ctx.strokeStyle = 'rgba(20,12,4,0.5)';
-  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(30,18,8,0.55)';
+  ctx.lineWidth = 1.8;
   ctx.stroke();
   ctx.restore();
 
