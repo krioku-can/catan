@@ -66,7 +66,8 @@ export function normalizePlayerDevCards(player: Player): void {
 }
 
 export function createInitialState(config: GameConfig): GameState {
-  const { tiles, ports, intersections, edges } = generateBoard();
+  const boardMode = config.boardMode === 'balanced' ? 'balanced' : 'random';
+  const { tiles, ports, intersections, edges } = generateBoard(boardMode);
   
   const colors: PlayerColor[] = ['red', 'blue', 'white', 'orange'];
   const players: Player[] = [];
@@ -89,6 +90,7 @@ export function createInitialState(config: GameConfig): GameState {
   }
 
   const robberTile = tiles.find(t => t.hasRobber)!;
+  const vpToWin = config.victoryPointsToWin === 12 ? 12 : 10;
 
   return {
     id: Math.random().toString(36).substring(2, 8).toUpperCase(),
@@ -113,6 +115,9 @@ export function createInitialState(config: GameConfig): GameState {
     pendingDevAction: null,
     pendingDevRoads: 0,
     devDeck: shuffleDeck(FULL_DEV_DECK),
+    victoryPointsToWin: vpToWin,
+    friendlyRobber: !!config.friendlyRobber,
+    boardMode,
   };
 }
 
@@ -186,15 +191,13 @@ export function placeSetupSettlement(state: GameState, intersectionKey: string):
   const inter = state.intersections[intersectionKey];
   if (!inter) return 'Invalid intersection';
   if (inter.building) return 'Already occupied';
-  
-  // During setup, no distance rule for first settlement
-  if (state.setupRound > 0) {
-    // Second settlement: check distance from first
-    const adjacent = getAdjacentIntersections(intersectionKey, state.edges);
-    for (const adjKey of adjacent) {
-      const adj = state.intersections[adjKey];
-      if (adj?.building) return 'Too close to another settlement';
-    }
+
+  // Official distance rule: never place adjacent to another settlement/city.
+  // (First placement of the game auto-passes because the board is empty.)
+  const adjacent = getAdjacentIntersections(intersectionKey, state.edges);
+  for (const adjKey of adjacent) {
+    const adj = state.intersections[adjKey];
+    if (adj?.building) return 'Too close to another settlement';
   }
 
   inter.building = 'settlement';
@@ -202,15 +205,18 @@ export function placeSetupSettlement(state: GameState, intersectionKey: string):
   player.settlementsRemaining--;
   player.victoryPoints += 1;
 
-  // Both starting settlements provide resources: give 1 of each resource type
-  // from every adjacent non-desert/non-water hex on EACH setup settlement
-  // (the first and the second).
-  const hexes = getAdjacentHexes(intersectionKey, state.board);
-  hexes.forEach(hex => {
-    if (hex.type !== 'desert' && hex.type !== 'water') {
-      addResources(player, { [hex.type]: 1 });
-    }
-  });
+  // Official / Catan Universe: ONLY the second settlement grants starting
+  // resources — 1 of each resource from every adjacent land hex.
+  // First-round setup is setupRound < numPlayers*2; second round is >= that.
+  const isSecondSettlement = state.setupRound >= state.players.length * 2;
+  if (isSecondSettlement) {
+    const hexes = getAdjacentHexes(intersectionKey, state.board);
+    hexes.forEach(hex => {
+      if (hex.type !== 'desert' && hex.type !== 'water') {
+        addResources(player, { [hex.type]: 1 });
+      }
+    });
+  }
 
   return null; // success
 }
@@ -332,12 +338,16 @@ export function moveRobber(state: GameState, targetHexQ: number, targetHexR: num
   // Steal a random resource from a player with settlements on this hex
   if (stealFrom) {
     const target = getPlayerByColor(state, stealFrom);
-    const hasResources = RESOURCES.some((r: ResourceType) => (target.resources[r] || 0) > 0);
-    if (hasResources) {
-      const available = RESOURCES.filter((r: ResourceType) => (target.resources[r] || 0) > 0);
-      const stolen = available[Math.floor(Math.random() * available.length)];
-      target.resources[stolen]--;
-      getCurrentPlayer(state).resources[stolen]++;
+    if (state.friendlyRobber && (target.victoryPoints || 0) <= 2) {
+      // Friendly Robber: skip steal silently if target is protected
+    } else {
+      const hasResources = RESOURCES.some((r: ResourceType) => (target.resources[r] || 0) > 0);
+      if (hasResources) {
+        const available = RESOURCES.filter((r: ResourceType) => (target.resources[r] || 0) > 0);
+        const stolen = available[Math.floor(Math.random() * available.length)];
+        target.resources[stolen]--;
+        getCurrentPlayer(state).resources[stolen]++;
+      }
     }
   }
 
@@ -359,6 +369,8 @@ export function getStealTargets(
     if (!inter?.owner || inter.owner === current) return;
     const p = getPlayerByColor(state, inter.owner);
     if (!p) return;
+    // Catan Universe Friendly Robber: protected until >2 VP.
+    if (state.friendlyRobber && (p.victoryPoints || 0) <= 2) return;
     const hasRes = RESOURCES.some(r => (p.resources[r] || 0) > 0);
     if (hasRes && !targets.includes(inter.owner)) targets.push(inter.owner);
   });
@@ -369,6 +381,9 @@ export function getStealTargets(
 export function stealFrom(state: GameState, target: PlayerColor): string | null {
   const t = getPlayerByColor(state, target);
   if (!t) return 'Invalid target';
+  if (state.friendlyRobber && (t.victoryPoints || 0) <= 2) {
+    return 'Friendly Robber: cannot steal from players with 2 VP or fewer';
+  }
   const hasResources = RESOURCES.some(r => (t.resources[r] || 0) > 0);
   if (!hasResources) return 'Target has no resources';
   const available = RESOURCES.filter(r => (t.resources[r] || 0) > 0);
@@ -629,8 +644,9 @@ export function endTurn(state: GameState): void {
   state.dice = null;
   state.robberMovedThisTurn = false;
 
-  // Official: game ends when a player reaches 10 VP on their turn.
-  if (ending.victoryPoints >= 10) {
+  // Official: game ends when a player reaches the VP target on their turn.
+  const vpTarget = state.victoryPointsToWin || 10;
+  if (ending.victoryPoints >= vpTarget) {
     state.winner = ending.color;
     state.phase = 'build';
     return;
@@ -773,11 +789,9 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
       const candidates: { key: string; score: number }[] = [];
       Object.values(state.intersections).forEach(inter => {
         if (inter.building) return;
-        // On the 2nd+ setup settlement, respect the distance rule
-        if (state.setupRound > 0) {
-          const adjacent = getAdjacentIntersections(inter.key, state.edges);
-          if (adjacent.some(a => state.intersections[a]?.building)) return;
-        }
+        // Official distance rule on every setup settlement
+        const adjacent = getAdjacentIntersections(inter.key, state.edges);
+        if (adjacent.some(a => state.intersections[a]?.building)) return;
         const hexes = getAdjacentHexes(inter.key, state.board);
         let score = 0;
         hexes.forEach(h => {

@@ -108,10 +108,24 @@ export interface GameState {
   pendingDevRoads: number;
   /** Shared development-card deck (face-down). Drawn on buy. */
   devDeck: DevelopmentCard['type'][];
+  /** VP needed to win (official 10; Catan Universe often allows 12). */
+  victoryPointsToWin: number;
+  /**
+   * Catan Universe "Friendly Robber": cannot steal from players with
+   * 2 or fewer victory points.
+   */
+  friendlyRobber: boolean;
+  boardMode: 'random' | 'balanced';
 }
 
 export interface GameConfig {
   numPlayers: number;
   playerNames: string[];
   aiPlayers: number[]; // indices of AI players
+  /** Default 10 (official). Catan Universe-style custom games often use 12. */
+  victoryPointsToWin?: number;
+  /** Default false. When true, robber cannot steal from ≤2 VP players. */
+  friendlyRobber?: boolean;
+  /** random = shuffle; balanced = avoid clustered high-pips + resource clumps. */
+  boardMode?: 'random' | 'balanced';
 }

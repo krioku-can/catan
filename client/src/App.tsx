@@ -56,7 +56,7 @@ function Home({ onPick }: { onPick: (m: Mode) => void }) {
           onClick={() => onPick('local')}
         >
           🤖 Play vs AI
-          <span style={styles.btnHint}>Jump right in — no room needed</span>
+          <span style={styles.btnHint}>Customize players, VP, board & rules</span>
         </button>
 
         <button
@@ -86,7 +86,7 @@ export default function App() {
   if (mode === 'local') {
     return (
       <Game
-        quickStart
+        quickStart={false}
         playerName={playerName}
         onExit={() => setMode('home')}
       />

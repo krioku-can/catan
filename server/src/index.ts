@@ -17,6 +17,11 @@ interface Room {
   players: PlayerConnection[];
   gameState: GameState | null;
   hostId: string;
+  settings: {
+    victoryPointsToWin: 10 | 12;
+    friendlyRobber: boolean;
+    boardMode: 'random' | 'balanced';
+  };
 }
 
 interface PlayerConnection {
@@ -143,6 +148,11 @@ io.on('connection', (socket) => {
       }],
       gameState: null,
       hostId: playerId,
+      settings: {
+        victoryPointsToWin: 10,
+        friendlyRobber: true,
+        boardMode: 'balanced',
+      },
     };
 
     rooms.set(roomCode, room);
@@ -307,19 +317,46 @@ io.on('connection', (socket) => {
     if (!roomCode) return;
     const room = rooms.get(roomCode);
     if (!room || room.gameState) return;
-    if (room.players[0].playerId !== room.hostId) return;
+    const starter = room.players.find(p => p.socketId === socket.id);
+    if (!starter || starter.playerId !== room.hostId) return;
     if (room.players.length < 2) return;
 
     const config: GameConfig = {
       numPlayers: room.players.length,
       playerNames: room.players.map(p => p.name),
       aiPlayers: room.players.map((p, i) => p.isAI ? i : -1).filter(i => i >= 0),
+      victoryPointsToWin: room.settings?.victoryPointsToWin ?? 10,
+      friendlyRobber: room.settings?.friendlyRobber ?? true,
+      boardMode: room.settings?.boardMode ?? 'balanced',
     };
 
     room.gameState = createInitialState(config);
-    console.log(`[game] Started in ${roomCode} with ${room.players.length} players`);
+    console.log(`[game] Started in ${roomCode} with ${room.players.length} players · ${config.victoryPointsToWin}VP`);
 
     emitGameToRoom(room);
+  });
+
+  // Host updates custom game settings (Catan Universe-style)
+  socket.on('update_settings', (partial: Partial<Room['settings']>) => {
+    const roomCode = socketToRoom.get(socket.id);
+    if (!roomCode) return;
+    const room = rooms.get(roomCode);
+    if (!room || room.gameState) return;
+    const conn = room.players.find(p => p.socketId === socket.id);
+    if (!conn || conn.playerId !== room.hostId) return;
+    if (!room.settings) {
+      room.settings = { victoryPointsToWin: 10, friendlyRobber: true, boardMode: 'balanced' };
+    }
+    if (partial.victoryPointsToWin === 10 || partial.victoryPointsToWin === 12) {
+      room.settings.victoryPointsToWin = partial.victoryPointsToWin;
+    }
+    if (typeof partial.friendlyRobber === 'boolean') {
+      room.settings.friendlyRobber = partial.friendlyRobber;
+    }
+    if (partial.boardMode === 'random' || partial.boardMode === 'balanced') {
+      room.settings.boardMode = partial.boardMode;
+    }
+    io.to(roomCode).emit('room_update', serializeRoom(room));
   });
 
   // ── Game Actions ──
@@ -729,6 +766,11 @@ function serializeRoom(room: Room) {
     })),
     hostId: room.hostId,
     inGame: room.gameState !== null,
+    settings: room.settings || {
+      victoryPointsToWin: 10,
+      friendlyRobber: true,
+      boardMode: 'balanced',
+    },
   };
 }
 

@@ -3,7 +3,7 @@ import { useSocket, fetchRooms } from '../hooks/useSocket';
 import { getStored, setStored } from '../storage';
 
 export default function Lobby({ onBack, initialRoomCode }: { onBack?: () => void; initialRoomCode?: string }) {
-  const { connected, connectionMessage, room, playerId, createRoom, joinRoom, toggleReady, addAI, removeAI, startGame, leaveRoom, retryConnect } = useSocket();
+  const { connected, connectionMessage, room, playerId, createRoom, joinRoom, toggleReady, addAI, removeAI, startGame, updateSettings, leaveRoom, retryConnect } = useSocket();
   const [name, setName] = useState(() => getStored('catan_name') || '');
   const [roomCode, setRoomCode] = useState(initialRoomCode || '');
   const [showJoin, setShowJoin] = useState(false);
@@ -99,6 +99,64 @@ export default function Lobby({ onBack, initialRoomCode }: { onBack?: () => void
                 )}
               </div>
             ))}
+          </div>
+
+          {/* Catan Universe-style game settings (host editable) */}
+          <div style={styles.settingsBox}>
+            <div style={styles.settingsTitle}>Game settings</div>
+            <div style={styles.settingsRow}>
+              <span>Victory points</span>
+              <div style={styles.chipRow}>
+                {([10, 12] as const).map(n => (
+                  <button
+                    key={n}
+                    type="button"
+                    disabled={!isHost}
+                    style={{
+                      ...styles.chip,
+                      ...((room.settings?.victoryPointsToWin ?? 10) === n ? styles.chipActive : {}),
+                    }}
+                    onClick={() => isHost && updateSettings({ victoryPointsToWin: n })}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={styles.settingsRow}>
+              <span>Board</span>
+              <div style={styles.chipRow}>
+                {([
+                  { id: 'balanced' as const, label: 'Balanced' },
+                  { id: 'random' as const, label: 'Random' },
+                ]).map(opt => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    disabled={!isHost}
+                    style={{
+                      ...styles.chip,
+                      ...((room.settings?.boardMode ?? 'balanced') === opt.id ? styles.chipActive : {}),
+                    }}
+                    onClick={() => isHost && updateSettings({ boardMode: opt.id })}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <label style={styles.friendlyRow}>
+              <input
+                type="checkbox"
+                disabled={!isHost}
+                checked={room.settings?.friendlyRobber ?? true}
+                onChange={e => isHost && updateSettings({ friendlyRobber: e.target.checked })}
+              />
+              Friendly Robber (protect ≤2 VP)
+            </label>
+            <p style={styles.settingsNote}>
+              Official setup: resources only on your <strong>second</strong> settlement.
+            </p>
           </div>
 
           <div style={styles.actions}>
@@ -475,5 +533,61 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     fontWeight: 'bold',
     color: '#34d399',
+  },
+  settingsBox: {
+    marginTop: 12,
+    marginBottom: 12,
+    padding: 12,
+    borderRadius: 10,
+    background: '#1a1a2e',
+    border: '1px solid #0f3460',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 10,
+  },
+  settingsTitle: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#ffd700',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  settingsRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    fontSize: 13,
+    color: '#e0e0e0',
+  },
+  chipRow: { display: 'flex', gap: 6 },
+  chip: {
+    padding: '6px 10px',
+    border: '1px solid #0f3460',
+    borderRadius: 6,
+    background: '#16213e',
+    color: '#e0e0e0',
+    fontSize: 12,
+    fontWeight: 'bold',
+    cursor: 'pointer',
+  },
+  chipActive: {
+    borderColor: '#ffd700',
+    background: 'rgba(255,215,0,0.12)',
+    color: '#ffd700',
+  },
+  friendlyRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    fontSize: 13,
+    color: '#e0e0e0',
+    cursor: 'pointer',
+  },
+  settingsNote: {
+    margin: 0,
+    fontSize: 11,
+    color: '#8890a0',
+    lineHeight: 1.35,
   },
 };

@@ -195,12 +195,39 @@ function shuffle<T>(arr: T[]): T[] {
 }
 
 // Generate a complete Catan board
-export function generateBoard(): { tiles: HexTile[]; ports: Port[]; intersections: Record<string, Intersection>; edges: Record<string, Edge> } {
+export function generateBoard(mode: 'random' | 'balanced' = 'random'): { tiles: HexTile[]; ports: Port[]; intersections: Record<string, Intersection>; edges: Record<string, Edge> } {
   // 1. Get all hex positions
   const hexPositions = getHexesInRadius(BOARD_RADIUS);
   
   // 2. Shuffle and assign resource types
-  const shuffledResources = shuffle(RESOURCE_DISTRIBUTION);
+  // Balanced mode: re-shuffle until same-resource hexes aren't overly clumped
+  // (no resource type with 3+ tiles all mutually within distance 2 of each other center).
+  let shuffledResources = shuffle(RESOURCE_DISTRIBUTION);
+  if (mode === 'balanced') {
+    for (let attempt = 0; attempt < 80; attempt++) {
+      const candidate = shuffle(RESOURCE_DISTRIBUTION);
+      const trial = hexPositions.map((pos, i) => ({ ...pos, type: candidate[i] }));
+      let clumpy = false;
+      for (const res of ['brick', 'lumber', 'wool', 'grain', 'ore'] as const) {
+        const same = trial.filter(t => t.type === res);
+        // Penalize three of the same resource forming a tight cluster
+        if (same.length >= 3) {
+          for (let i = 0; i < same.length; i++) {
+            let near = 0;
+            for (let j = 0; j < same.length; j++) {
+              if (i === j) continue;
+              if (hexDistance(same[i], same[j]) <= 1) near++;
+            }
+            if (near >= 2) { clumpy = true; break; }
+          }
+        }
+        if (clumpy) break;
+      }
+      if (!clumpy) { shuffledResources = candidate; break; }
+      if (attempt === 79) shuffledResources = candidate;
+    }
+  }
+
   const tiles: HexTile[] = hexPositions.map((pos, i) => ({
     q: pos.q,
     r: pos.r,
@@ -210,6 +237,7 @@ export function generateBoard(): { tiles: HexTile[]; ports: Port[]; intersection
 
   // 3. Assign number tokens (skip desert), enforcing the official rule that
   //    the red numbers (6 and 8) cannot be placed on adjacent hexes.
+  //    Balanced mode is stricter: also avoid 2/12 next to each other when possible.
   const landTiles = tiles.filter(t => t.type !== 'desert');
   const shuffledNumbers = shuffle(NUMBER_DISTRIBUTION);
   // Try up to 200 times to find a layout where no 6/8 hex is adjacent to

@@ -259,7 +259,9 @@ export default function OnlineGame() {
       {gameState.setupPhase && (
         <div style={styles.setupHint}>
           {gameState.phase === 'setup_settlement'
-            ? '👆 Tap a hex corner to place a settlement'
+            ? (gameState.setupRound >= gameState.players.length * 2
+                ? '👆 Second settlement — you collect adjacent resources'
+                : '👆 First settlement — no resources yet (official rule)')
             : '👆 Tap an edge to place a road'}
         </div>
       )}

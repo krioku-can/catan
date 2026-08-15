@@ -21,6 +21,11 @@ interface RoomInfo {
   players: RoomPlayer[];
   hostId: string;
   inGame: boolean;
+  settings?: {
+    victoryPointsToWin: 10 | 12;
+    friendlyRobber: boolean;
+    boardMode: 'random' | 'balanced';
+  };
 }
 
 interface SocketContextType {
@@ -39,6 +44,7 @@ interface SocketContextType {
   addAI: () => void;
   removeAI: (playerId: string) => void;
   startGame: () => void;
+  updateSettings: (partial: NonNullable<RoomInfo['settings']> extends infer S ? Partial<S> : never) => void;
   sendAction: (action: string, data?: any) => void;
   sendChat: (text: string) => void;
   leaveRoom: () => void;
@@ -244,6 +250,10 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     socket?.emit('start_game');
   }, [socket]);
 
+  const updateSettings = useCallback((partial: { victoryPointsToWin?: 10 | 12; friendlyRobber?: boolean; boardMode?: 'random' | 'balanced' }) => {
+    socket?.emit('update_settings', partial);
+  }, [socket]);
+
   const sendAction = useCallback((action: string, data?: any) => {
     socket?.emit('game_action', { action, data });
   }, [socket]);
@@ -265,7 +275,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     <SocketContext.Provider value={{
       socket, connected, connectionStatus, connectionMessage,
       room, playerId, gameState, chatMessages, lastActionResult,
-      createRoom, joinRoom, toggleReady, addAI, removeAI, startGame,
+      createRoom, joinRoom, toggleReady, addAI, removeAI, startGame, updateSettings,
       sendAction, sendChat, leaveRoom, retryConnect,
     }}>
       {children}

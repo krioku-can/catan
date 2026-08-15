@@ -87,11 +87,11 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     _setConfig(c);
     setGameState(state);
     setShowSetup(false);
-    addLog(`Game started! ${c.playerNames.join(' vs ')}`);
-    addLog('Setup phase: place your first settlement');
+    addLog(`Game started! ${c.playerNames.join(' vs ')} · ${state.victoryPointsToWin} VP${state.friendlyRobber ? ' · Friendly Robber' : ''}`);
+    addLog('Setup: place settlements & roads. Resources only on your SECOND settlement.');
   }, [addLog]);
 
-  // One-tap vs AI
+  // One-tap vs AI still supported if quickStart=true (defaults: 4p, balanced, friendly robber)
   useEffect(() => {
     if (!quickStart || startedRef.current) return;
     startedRef.current = true;
@@ -99,6 +99,9 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
       numPlayers: 4,
       playerNames: [playerName, 'AI Blue', 'AI White', 'AI Orange'],
       aiPlayers: [1, 2, 3],
+      victoryPointsToWin: 10,
+      friendlyRobber: true,
+      boardMode: 'balanced',
     });
   }, [quickStart, playerName, startGame]);
 
@@ -110,6 +113,10 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     if (raw) {
       try {
         const saved = JSON.parse(raw) as GameState;
+        // Backfill Catan Universe settings for older saves
+        if (saved.victoryPointsToWin == null) saved.victoryPointsToWin = 10;
+        if (saved.friendlyRobber == null) saved.friendlyRobber = false;
+        if (!saved.boardMode) saved.boardMode = 'random';
         setGameState(saved);
         setShowSetup(false);
         addLog('Resumed saved game');
@@ -537,7 +544,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
   }, [gameState, addLog]);
 
   if (showSetup) {
-    return <SetupScreen onStart={startGame} onBack={onExit} />;
+    return <SetupScreen onStart={startGame} onBack={onExit} defaultName={playerName} />;
   }
 
   if (!gameState) {
@@ -671,7 +678,9 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
       {gameState.setupPhase && isMyTurn && (
         <div style={styles.setupHintBar}>
           {gameState.phase === 'setup_settlement'
-            ? '👆 Tap a corner for a settlement'
+            ? (gameState.setupRound >= gameState.players.length * 2
+                ? '👆 Second settlement — collect adjacent resources'
+                : '👆 First settlement — no resources yet')
             : '👆 Tap an edge for a road'}
         </div>
       )}
@@ -864,15 +873,18 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
   );
 }
 
-function SetupScreen({ onStart, onBack }: { onStart: (config: GameConfig) => void; onBack?: () => void }) {
+function SetupScreen({ onStart, onBack, defaultName = 'You' }: { onStart: (config: GameConfig) => void; onBack?: () => void; defaultName?: string }) {
   const [numPlayers, setNumPlayers] = useState(4);
-  const [names, setNames] = useState(['', '', '', '']);
+  const [names, setNames] = useState([defaultName, '', '', '']);
   const [aiPlayers, setAiPlayers] = useState<number[]>([1, 2, 3]);
+  const [victoryPointsToWin, setVictoryPointsToWin] = useState<10 | 12>(10);
+  const [friendlyRobber, setFriendlyRobber] = useState(true);
+  const [boardMode, setBoardMode] = useState<'random' | 'balanced'>('balanced');
 
   return (
     <div style={styles.setupScreen}>
       <h1 style={styles.title}>🏝️ CATAN</h1>
-      <p style={styles.subtitle}>Local game setup</p>
+      <p style={styles.subtitle}>Customize game · Catan Universe style</p>
 
       <div style={styles.setupCard}>
         <label style={styles.label}>Number of Players</label>
@@ -921,13 +933,64 @@ function SetupScreen({ onStart, onBack }: { onStart: (config: GameConfig) => voi
           </div>
         ))}
 
+        <div style={styles.divider} />
+        <label style={styles.label}>Victory points to win</label>
+        <div style={styles.playerCountRow}>
+          {([10, 12] as const).map(n => (
+            <button
+              key={n}
+              type="button"
+              style={{ ...styles.countBtn, ...(victoryPointsToWin === n ? styles.countBtnActive : {}) }}
+              onClick={() => setVictoryPointsToWin(n)}
+            >
+              {n} VP
+            </button>
+          ))}
+        </div>
+
+        <label style={styles.label}>Board</label>
+        <div style={styles.playerCountRow}>
+          {([
+            { id: 'balanced' as const, label: 'Balanced' },
+            { id: 'random' as const, label: 'Random' },
+          ]).map(opt => (
+            <button
+              key={opt.id}
+              type="button"
+              style={{ ...styles.countBtn, ...(boardMode === opt.id ? styles.countBtnActive : {}) }}
+              onClick={() => setBoardMode(opt.id)}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+
+        <label style={styles.toggleRow}>
+          <input
+            type="checkbox"
+            checked={friendlyRobber}
+            onChange={e => setFriendlyRobber(e.target.checked)}
+          />
+          <span>
+            <strong>Friendly Robber</strong>
+            <span style={styles.toggleHint}> — can’t steal from players with 2 VP or less</span>
+          </span>
+        </label>
+
+        <p style={styles.rulesNote}>
+          Setup: resources only from your <strong>second</strong> settlement (official Catan).
+        </p>
+
         <button
           type="button"
           style={styles.startBtn}
           onClick={() => onStart({
             numPlayers,
-            playerNames: names.slice(0, numPlayers).map((n, i) => n || (i === 0 ? 'You' : `AI ${i + 1}`)),
+            playerNames: names.slice(0, numPlayers).map((n, i) => n || (i === 0 ? defaultName : `AI ${i + 1}`)),
             aiPlayers,
+            victoryPointsToWin,
+            friendlyRobber,
+            boardMode,
           })}
         >
           Start Game
@@ -1050,6 +1113,17 @@ const styles: Record<string, React.CSSProperties> = {
   },
   tabActive: { color: '#ffd700', borderBottom: '2px solid #ffd700' },
   setupMsg: { textAlign: 'center', color: '#8890a0', fontSize: 14, padding: 16 },
+  divider: { height: 1, background: '#0f3460', margin: '4px 0' },
+  toggleRow: {
+    display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 14, color: '#e0e0e0',
+    cursor: 'pointer', lineHeight: 1.35,
+  },
+  toggleHint: { color: '#8890a0', fontWeight: 'normal' as const },
+  rulesNote: {
+    fontSize: 12, color: '#a0a8b8', lineHeight: 1.4, margin: 0,
+    padding: '8px 10px', background: 'rgba(255,215,0,0.06)', borderRadius: 8,
+    border: '1px solid rgba(255,215,0,0.15)',
+  },
   setupScreen: {
     display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
     minHeight: '100dvh', background: '#1a1a2e', color: '#e0e0e0', padding: 20,
