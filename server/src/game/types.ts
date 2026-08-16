@@ -94,6 +94,11 @@ export interface GameState {
   robberHex: string; // q,r of hex with robber
   /** True once the robber has been moved this turn (7 roll or knight). */
   robberMovedThisTurn: boolean;
+  /**
+   * True only when a 7 was rolled or a Knight was played and the robber
+   * still needs to be relocated. Prevents moving the robber on every roll.
+   */
+  pendingRobberMove: boolean;
   longestRoad: { color?: PlayerColor; length: number };
   largestArmy: { color?: PlayerColor; size: number };
   tradeOffers: TradeOffer[];

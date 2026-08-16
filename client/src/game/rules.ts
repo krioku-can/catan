@@ -106,6 +106,7 @@ export function createInitialState(config: GameConfig): GameState {
     dice: null,
     robberHex: `${robberTile.q},${robberTile.r}`,
     robberMovedThisTurn: false,
+    pendingRobberMove: false,
     longestRoad: { length: 0 },
     largestArmy: { size: 0 },
     tradeOffers: [],
@@ -281,6 +282,9 @@ export function rollDice(state: GameState): [number, number] {
     state.discardQueue = state.players
       .filter(p => totalResourceCount(p) > 7)
       .map(p => p.color);
+    // Robber MUST be moved after a 7 (once discards finish).
+    state.pendingRobberMove = true;
+    state.robberMovedThisTurn = false;
     // If nobody needs to discard, skip straight to the robber/trade phase.
     state.phase = state.discardQueue.length > 0 ? 'discard' : 'trade';
   }
@@ -334,6 +338,7 @@ export function moveRobber(state: GameState, targetHexQ: number, targetHexR: num
   newTile.hasRobber = true;
   state.robberHex = `${targetHexQ},${targetHexR}`;
   state.robberMovedThisTurn = true;
+  state.pendingRobberMove = false;
 
   // Steal a random resource from a player with settlements on this hex
   if (stealFrom) {
@@ -546,6 +551,10 @@ export function playKnight(state: GameState): string | null {
     player.victoryPoints += 2;
   }
 
+  // Knight requires moving the robber (even if dice were not a 7).
+  state.pendingRobberMove = true;
+  state.robberMovedThisTurn = false;
+
   return null; // success, robber move follows
 }
 
@@ -643,6 +652,7 @@ export function endTurn(state: GameState): void {
   state.tradeOffers = [];
   state.dice = null;
   state.robberMovedThisTurn = false;
+  state.pendingRobberMove = false;
 
   // Official: game ends when a player reaches the VP target on their turn.
   const vpTarget = state.victoryPointsToWin || 10;
@@ -909,9 +919,8 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
   }
 
   if (state.phase === 'trade') {
-    // After a 7 (or a knight), the AI must move the robber and steal before
-    // trading/building. If the robber hasn't been moved this turn, do it now.
-    if (!state.robberMovedThisTurn) {
+    // ONLY move the robber after a 7 or a Knight — never on ordinary production rolls.
+    if (state.pendingRobberMove && !state.robberMovedThisTurn) {
       // Pick a hex with enemy settlements/cities (prefer one with the most
       // enemy pieces, and avoid the current robber hex).
       const [rq, rr] = state.robberHex.split(',').map(Number);
@@ -939,8 +948,9 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
         }
         return { action: 'move_robber', data: { q: best.q, r: best.r } };
       }
-      // No valid target — mark moved so we don't loop.
+      // No valid target hex — clear pending so we don't loop forever.
       state.robberMovedThisTurn = true;
+      state.pendingRobberMove = false;
     }
     // AI skips trading and goes to build
     state.phase = 'build';

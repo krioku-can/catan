@@ -71,8 +71,8 @@ export function getTurnCoach(
   }
 
   if (gs.phase === 'trade') {
-    // Robber still needs moving after a 7 if not yet moved this turn
-    if (isMe && gs.dice && gs.dice[0] + gs.dice[1] === 7 && !gs.robberMovedThisTurn) {
+    // Robber only after 7 or Knight
+    if (isMe && gs.pendingRobberMove && !gs.robberMovedThisTurn) {
       return '🦹 Move the robber — tap a hex, then steal';
     }
     return isMe

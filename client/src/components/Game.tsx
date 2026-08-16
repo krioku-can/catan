@@ -144,6 +144,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
         if (saved.victoryPointsToWin == null) saved.victoryPointsToWin = 10;
         if (saved.friendlyRobber == null) saved.friendlyRobber = false;
         if (!saved.boardMode) saved.boardMode = 'random';
+        if (saved.pendingRobberMove == null) saved.pendingRobberMove = false;
         setGameState(saved);
         setShowSetup(false);
         addLog('Resumed saved game');
@@ -211,6 +212,11 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
         }
         case 'skip_trade':
           gameState.phase = 'build';
+          break;
+        case 'move_robber':
+          // aiTurn already moved robber + steal
+          addLog(`${current.name} moved the robber`);
+          sfx.robber();
           break;
         case 'discard':
           // aiTurn already applied the current AI's discard. But a 7 can put
