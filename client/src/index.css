@@ -18,6 +18,8 @@ body,
   min-height: 100%;
   min-height: 100dvh;
   box-sizing: border-box;
+  /* Allow nested scroll pages (setup/home/lobby) to scroll inside the locked shell */
+  position: relative;
 }
 
 body {
@@ -25,6 +27,18 @@ body {
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
   color: #f5efe4;
+}
+
+/* Scrollable full-screen pages (home, setup, lobby, profile) */
+.scroll-page {
+  height: 100%;
+  max-height: 100dvh;
+  width: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
 }
 
 /* ── Score bar (CU top pills) ─────────────────────────────────────── */

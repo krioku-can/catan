@@ -880,7 +880,7 @@ function SetupScreen({ onStart, onBack, defaultName = 'You' }: { onStart: (confi
   const [boardMode, setBoardMode] = useState<'random' | 'balanced'>('balanced');
 
   return (
-    <div style={styles.setupScreen}>
+    <div className="scroll-page" style={styles.setupScreen}>
       <h1 style={styles.title}>🏝️ CATAN</h1>
       <p style={styles.subtitle}>Customize game · Catan Universe style</p>
 
@@ -979,23 +979,25 @@ function SetupScreen({ onStart, onBack, defaultName = 'You' }: { onStart: (confi
           Setup: resources only from your <strong>second</strong> settlement (official Catan).
         </p>
 
-        <button
-          type="button"
-          style={styles.startBtn}
-          onClick={() => onStart({
-            numPlayers,
-            playerNames: names.slice(0, numPlayers).map((n, i) => n || (i === 0 ? defaultName : `AI ${i + 1}`)),
-            aiPlayers,
-            victoryPointsToWin,
-            friendlyRobber,
-            boardMode,
-          })}
-        >
-          Start Game
-        </button>
-        {onBack && (
-          <button type="button" style={styles.backBtn} onClick={onBack}>Back</button>
-        )}
+        <div style={styles.setupActions}>
+          <button
+            type="button"
+            style={styles.startBtn}
+            onClick={() => onStart({
+              numPlayers,
+              playerNames: names.slice(0, numPlayers).map((n, i) => n || (i === 0 ? defaultName : `AI ${i + 1}`)),
+              aiPlayers,
+              victoryPointsToWin,
+              friendlyRobber,
+              boardMode,
+            })}
+          >
+            Start Game
+          </button>
+          {onBack && (
+            <button type="button" style={styles.backBtn} onClick={onBack}>Back</button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1122,39 +1124,75 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1px solid rgba(255,215,0,0.15)',
   },
   setupScreen: {
-    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-    minHeight: '100dvh', background: '#1a1a2e', color: '#e0e0e0', padding: 20,
+    height: '100%',
+    maxHeight: '100dvh',
+    width: '100%',
+    overflowY: 'auto',
+    overflowX: 'hidden',
+    WebkitOverflowScrolling: 'touch',
+    overscrollBehavior: 'contain',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    background: 'radial-gradient(ellipse at 40% 20%, #6b4226 0%, #3a2412 55%, #241608 100%)',
+    color: '#f5efe4',
+    padding: '16px 16px max(28px, env(safe-area-inset-bottom, 0px))',
+    paddingTop: 'max(16px, env(safe-area-inset-top, 0px))',
+    boxSizing: 'border-box',
   },
   title: {
-    fontSize: 40, color: '#ffd700', margin: 0, textShadow: '0 0 20px rgba(255,215,0,0.3)',
+    fontSize: 36, color: '#ffd700', margin: '8px 0 0', textShadow: '0 0 20px rgba(255,215,0,0.3)',
+    flexShrink: 0,
   },
-  subtitle: { fontSize: 15, color: '#8890a0', marginBottom: 24 },
+  subtitle: { fontSize: 14, color: '#c4b49a', marginBottom: 16, flexShrink: 0 },
   setupCard: {
-    background: '#16213e', borderRadius: 12, padding: 24, width: '100%', maxWidth: 400,
-    display: 'flex', flexDirection: 'column', gap: 14,
+    background: 'linear-gradient(180deg, rgba(48,28,14,0.95), rgba(28,16,8,0.98))',
+    borderRadius: 12,
+    padding: 20,
+    width: '100%',
+    maxWidth: 400,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 12,
+    border: '1px solid rgba(200,150,70,0.28)',
+    boxShadow: '0 12px 40px rgba(0,0,0,0.35)',
+    marginBottom: 8,
   },
-  label: { fontSize: 13, color: '#8890a0', textTransform: 'uppercase', letterSpacing: 1 },
+  label: { fontSize: 13, color: '#c4b49a', textTransform: 'uppercase', letterSpacing: 1 },
   playerCountRow: { display: 'flex', gap: 8 },
   countBtn: {
-    flex: 1, padding: 12, border: '2px solid #0f3460', borderRadius: 8,
-    background: '#1a1a2e', color: '#e0e0e0', fontSize: 18, fontWeight: 'bold', cursor: 'pointer',
+    flex: 1, padding: 12, border: '2px solid rgba(200,150,70,0.25)', borderRadius: 8,
+    background: 'rgba(20,12,6,0.7)', color: '#f5efe4', fontSize: 18, fontWeight: 'bold', cursor: 'pointer',
   },
-  countBtnActive: { borderColor: '#ffd700', background: '#0f3460' },
+  countBtnActive: { borderColor: '#ffd700', background: 'rgba(60,36,18,0.95)' },
   playerRow: { display: 'flex', alignItems: 'center', gap: 8 },
   colorDot: { width: 14, height: 14, borderRadius: '50%', flexShrink: 0 },
   nameInput: {
-    flex: 1, padding: '8px 12px', border: '1px solid #0f3460', borderRadius: 6,
-    background: '#1a1a2e', color: '#e0e0e0', fontSize: 14,
+    flex: 1, padding: '8px 12px', border: '1px solid rgba(200,150,70,0.3)', borderRadius: 6,
+    background: 'rgba(20,12,6,0.7)', color: '#f5efe4', fontSize: 14,
   },
-  aiCheckbox: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, color: '#8890a0' },
+  aiCheckbox: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, color: '#c4b49a' },
+  setupActions: {
+    position: 'sticky',
+    bottom: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+    marginTop: 4,
+    paddingTop: 10,
+    background: 'linear-gradient(180deg, rgba(28,16,8,0), rgba(28,16,8,0.98) 28%)',
+  },
   startBtn: {
     padding: '14px 24px', border: 'none', borderRadius: 8,
     background: 'linear-gradient(135deg, #e94560, #c23152)',
     color: 'white', fontSize: 17, fontWeight: 'bold', cursor: 'pointer',
+    width: '100%',
   },
   backBtn: {
-    padding: '10px', border: '1px solid #0f3460', borderRadius: 8,
-    background: 'transparent', color: '#8890a0', cursor: 'pointer',
+    padding: '10px', border: '1px solid rgba(200,150,70,0.3)', borderRadius: 8,
+    background: 'transparent', color: '#c4b49a', cursor: 'pointer',
+    width: '100%',
   },
   turnOrderScreen: {
     position: 'absolute', inset: 0, zIndex: 50, display: 'flex',

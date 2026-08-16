@@ -27,7 +27,7 @@ function Home({ onPick }: { onPick: (m: Mode) => void }) {
   };
 
   return (
-    <div style={styles.container}>
+    <div className="scroll-page" style={styles.container}>
       <h1 style={styles.title}>🏝️ CATAN</h1>
       <p style={styles.subtitle}>Settle the island</p>
       <div style={styles.versionBadge} title="Build version (git commit + build time)">v{APP_VERSION}</div>
@@ -124,12 +124,17 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: '100dvh',
+    justifyContent: 'flex-start',
+    height: '100%',
+    maxHeight: '100dvh',
+    overflowY: 'auto',
+    WebkitOverflowScrolling: 'touch',
     background: 'radial-gradient(ellipse at 40% 30%, #6b4226 0%, #3a2412 55%, #241608 100%)',
     color: '#f5efe4',
     fontFamily: 'Segoe UI, sans-serif',
-    padding: 20,
+    padding: '20px 20px max(28px, env(safe-area-inset-bottom, 0px))',
+    paddingTop: 'max(20px, env(safe-area-inset-top, 0px))',
+    boxSizing: 'border-box',
   },
   title: {
     fontSize: 42,
