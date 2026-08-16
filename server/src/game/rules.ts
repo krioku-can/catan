@@ -1,7 +1,7 @@
 // Core game rules and state management
 
-import type { GameState, GameConfig, Player, PlayerColor, ResourceType, DevelopmentCard, HexTile, Edge } from './types.js';
-import { generateBoard, canPlaceSettlement, canPlaceRoad, getResourceProduction, getAdjacentIntersections, getEdgesForIntersection, getHexCorners, getPortRate } from './board.js';
+import type { GameState, GameConfig, Player, PlayerColor, ResourceType, DevelopmentCard, HexTile, Edge } from './types';
+import { generateBoard, canPlaceSettlement, canPlaceRoad, getResourceProduction, getAdjacentIntersections, getEdgesForIntersection, getHexCorners, getPortRate } from './board';
 
 const RESOURCES: ResourceType[] = ['brick', 'lumber', 'wool', 'grain', 'ore'];
 
@@ -813,23 +813,43 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
       }
     }
     if (state.phase === 'setup_road') {
-      // The road MUST connect to the settlement the AI just placed. Pick an
-      // empty edge adjacent to one of the AI's own settlements.
-      const myKeys = new Set(
-        Object.values(state.intersections)
-          .filter(i => i.owner === player.color && i.building === 'settlement')
-          .map(i => i.key)
-      );
-      const validEdges = Object.values(state.edges)
-        .filter(e => !e.road && (myKeys.has(e.from) || myKeys.has(e.to)))
-        .map(e => e.key);
+      // Official rule: the setup road MUST connect to the settlement just
+      // placed. Prefer a settlement that currently has zero roads attached
+      // (the new one); never attach both setup roads to the first settlement.
+      const mySettlements = Object.values(state.intersections)
+        .filter(i => i.owner === player.color && i.building);
 
-      if (validEdges.length > 0) {
-        const pick = validEdges[Math.floor(Math.random() * validEdges.length)];
-        return { action: 'place_road', data: { key: pick } };
+      const roadCountAt = (key: string) =>
+        Object.values(state.edges).filter(
+          e => e.road === player.color && (e.from === key || e.to === key),
+        ).length;
+
+      // Settlements with fewest roads first (0 = just placed)
+      const ordered = [...mySettlements].sort(
+        (a, b) => roadCountAt(a.key) - roadCountAt(b.key),
+      );
+
+      for (const inter of ordered) {
+        const validEdges = Object.values(state.edges).filter(
+          e => !e.road && (e.from === inter.key || e.to === inter.key),
+        );
+        if (validEdges.length > 0) {
+          const pick = validEdges[Math.floor(Math.random() * validEdges.length)];
+          return { action: 'place_road', data: { key: pick.key } };
+        }
       }
+      // Absolute last resort — any free edge touching any of our settlements
+      const anyEdge = Object.values(state.edges).find(
+        e =>
+          !e.road &&
+          mySettlements.some(s => s.key === e.from || s.key === e.to),
+      );
+      if (anyEdge) return { action: 'place_road', data: { key: anyEdge.key } };
+      // Do NOT advance_setup without a road — return null and wait
+      return null;
     }
-    return { action: 'advance_setup' };
+    // Settlement phase with no candidates should not skip either
+    return null;
   }
 
   // Normal play

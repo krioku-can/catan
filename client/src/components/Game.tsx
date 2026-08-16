@@ -22,6 +22,26 @@ import { getTurnCoach } from '../turnCoach';
 
 const HEX_SIZE = 68;
 
+/** AI think delay between actions (ms). */
+export type AiSpeed = 'slow' | 'normal' | 'fast' | 'instant';
+const AI_SPEED_MS: Record<AiSpeed, number> = {
+  slow: 2000,
+  normal: 1100,
+  fast: 450,
+  instant: 80,
+};
+const AI_SPEED_LABEL: Record<AiSpeed, string> = {
+  slow: 'Slow',
+  normal: 'Normal',
+  fast: 'Fast',
+  instant: 'Instant',
+};
+function loadAiSpeed(): AiSpeed {
+  const v = getStored('catan_ai_speed');
+  if (v === 'slow' || v === 'normal' || v === 'fast' || v === 'instant') return v;
+  return 'slow'; // default slower so moves are readable
+}
+
 interface GameProps {
   quickStart?: boolean;
   playerName?: string;
@@ -44,9 +64,15 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
   const [debug, setDebug] = useState(() => new URLSearchParams(window.location.search).get('debug') === '1');
   const [turnOrderRolls, setTurnOrderRolls] = useState<Record<string, number> | null>(null);
   const [muted, setMutedState] = useState(() => isMuted());
+  const [aiSpeed, setAiSpeedState] = useState<AiSpeed>(() => loadAiSpeed());
   const startedRef = useRef(false);
   const statsRecordedRef = useRef(false);
   const lastTurnColorRef = useRef<string | null>(null);
+
+  const setAiSpeed = useCallback((s: AiSpeed) => {
+    setAiSpeedState(s);
+    setStored('catan_ai_speed', s);
+  }, []);
 
   // Unlock Web Audio on first pointer so SFX work on mobile
   useEffect(() => {
@@ -135,6 +161,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     const current = getCurrentPlayer(gameState);
     if (!current.isAI) return;
 
+    const delay = AI_SPEED_MS[aiSpeed] ?? AI_SPEED_MS.slow;
     const t = setTimeout(() => {
       const action = aiTurn(gameState);
       if (!action) {
@@ -148,6 +175,11 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
         case 'roll_dice': {
           const [d1, d2] = rollDice(gameState);
           addLog(`${current.name} rolled ${d1 + d2}`);
+          // Brief dice flash for AI rolls (skip on instant)
+          if (aiSpeed !== 'instant') {
+            setDiceFlash({ total: d1 + d2, faces: [d1, d2] });
+            sfx.dice();
+          }
           // If the AI rolled a 7, the discard queue may hold OTHER AIs (the
           // roller itself might not be in it). Drain every AI in the queue so
           // the game doesn't freeze on "Waiting for discard: <AI>" — the
@@ -210,16 +242,32 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           }
           break;
         case 'place_settlement':
-          if (gameState.setupPhase) placeSetupSettlement(gameState, action.data.key);
-          else placeSettlement(gameState, action.data.key);
-          if (gameState.setupPhase) advanceSetup(gameState);
-          addLog(`${current.name} placed a settlement`);
+          if (gameState.setupPhase) {
+            const err = placeSetupSettlement(gameState, action.data.key);
+            if (err === null) {
+              advanceSetup(gameState);
+              addLog(`${current.name} placed a settlement`);
+            } else {
+              addLog(`${current.name} failed settlement: ${err}`);
+            }
+          } else {
+            const err = placeSettlement(gameState, action.data.key);
+            if (err === null) addLog(`${current.name} placed a settlement`);
+          }
           break;
         case 'place_road':
-          if (gameState.setupPhase) placeSetupRoad(gameState, action.data.key);
-          else placeRoad(gameState, action.data.key);
-          if (gameState.setupPhase) advanceSetup(gameState);
-          addLog(`${current.name} placed a road`);
+          if (gameState.setupPhase) {
+            const err = placeSetupRoad(gameState, action.data.key);
+            if (err === null) {
+              advanceSetup(gameState);
+              addLog(`${current.name} placed a road`);
+            } else {
+              addLog(`${current.name} failed road: ${err}`);
+            }
+          } else {
+            const err = placeRoad(gameState, action.data.key);
+            if (err === null) addLog(`${current.name} placed a road`);
+          }
           break;
         case 'place_city':
           placeCity(gameState, action.data.key);
@@ -246,15 +294,16 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           addLog(`${current.name} ended turn`);
           break;
         case 'advance_setup':
+          // Only allow advance_setup outside forced road/settlement placement
           advanceSetup(gameState);
           break;
         default:
           break;
       }
       setGameState({ ...gameState });
-    }, 650);
+    }, delay);
     return () => clearTimeout(t);
-  }, [gameState, addLog]);
+  }, [gameState, addLog, aiSpeed]);
 
   const handleHexClick = useCallback((q: number, r: number) => {
     if (!gameState) return;
@@ -434,17 +483,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     addLog(`${player.name} ended their turn`);
     setSelectedAction(null);
     setGameState({ ...gameState });
-    setTimeout(() => {
-      if (!gameState) return;
-      const current = getCurrentPlayer(gameState);
-      if (current.isAI) {
-        const action = aiTurn(gameState);
-        if (action) {
-          addLog(`AI ${current.name}: ${action.action}`);
-          setGameState({ ...gameState });
-        }
-      }
-    }, 500);
+    // AI loop is driven by the useEffect — no need to force a second kick here.
   }, [gameState, addLog]);
 
   const handleSkipTrade = useCallback(() => {
@@ -545,7 +584,15 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
   }, [gameState, addLog]);
 
   if (showSetup) {
-    return <SetupScreen onStart={startGame} onBack={onExit} defaultName={playerName} />;
+    return (
+      <SetupScreen
+        onStart={startGame}
+        onBack={onExit}
+        defaultName={playerName}
+        aiSpeed={aiSpeed}
+        onAiSpeedChange={setAiSpeed}
+      />
+    );
   }
 
   if (!gameState) {
@@ -797,6 +844,24 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
                           setGameState({ ...gameState });
                         }}
                       />
+                      <div style={styles.aiSpeedInGame}>
+                        <span style={styles.aiSpeedLabel}>AI speed</span>
+                        <div style={styles.aiSpeedRow}>
+                          {(['slow', 'normal', 'fast', 'instant'] as AiSpeed[]).map(s => (
+                            <button
+                              key={s}
+                              type="button"
+                              style={{
+                                ...styles.aiSpeedBtn,
+                                ...(aiSpeed === s ? styles.aiSpeedBtnActive : {}),
+                              }}
+                              onClick={() => setAiSpeed(s)}
+                            >
+                              {AI_SPEED_LABEL[s]}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                       <DevCardPanel
                         player={me}
                         phase={gameState.phase}
@@ -871,7 +936,19 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
   );
 }
 
-function SetupScreen({ onStart, onBack, defaultName = 'You' }: { onStart: (config: GameConfig) => void; onBack?: () => void; defaultName?: string }) {
+function SetupScreen({
+  onStart,
+  onBack,
+  defaultName = 'You',
+  aiSpeed,
+  onAiSpeedChange,
+}: {
+  onStart: (config: GameConfig) => void;
+  onBack?: () => void;
+  defaultName?: string;
+  aiSpeed: AiSpeed;
+  onAiSpeedChange: (s: AiSpeed) => void;
+}) {
   const [numPlayers, setNumPlayers] = useState(4);
   const [names, setNames] = useState([defaultName, '', '', '']);
   const [aiPlayers, setAiPlayers] = useState<number[]>([1, 2, 3]);
@@ -962,6 +1039,23 @@ function SetupScreen({ onStart, onBack, defaultName = 'You' }: { onStart: (confi
             </button>
           ))}
         </div>
+
+        <label style={styles.label}>AI speed</label>
+        <div style={styles.playerCountRow}>
+          {(['slow', 'normal', 'fast', 'instant'] as AiSpeed[]).map(s => (
+            <button
+              key={s}
+              type="button"
+              style={{ ...styles.countBtn, fontSize: 13, ...(aiSpeed === s ? styles.countBtnActive : {}) }}
+              onClick={() => onAiSpeedChange(s)}
+            >
+              {AI_SPEED_LABEL[s]}
+            </button>
+          ))}
+        </div>
+        <p style={styles.toggleHint}>
+          How long each AI waits between moves · saved for next game
+        </p>
 
         <label style={styles.toggleRow}>
           <input
@@ -1226,5 +1320,37 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '12px 16px', border: 'none', borderRadius: 8,
     background: 'linear-gradient(135deg, #2ecc71, #27ae60)',
     color: 'white', fontSize: 14, fontWeight: 'bold', cursor: 'pointer',
+  },
+  aiSpeedInGame: {
+    marginTop: 10,
+    padding: '10px 12px',
+    borderRadius: 10,
+    background: 'rgba(0,0,0,0.25)',
+    border: '1px solid rgba(200,150,70,0.2)',
+  },
+  aiSpeedLabel: {
+    display: 'block',
+    fontSize: 11,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    color: '#c4b49a',
+    marginBottom: 8,
+  },
+  aiSpeedRow: { display: 'flex', gap: 6 },
+  aiSpeedBtn: {
+    flex: 1,
+    padding: '8px 4px',
+    border: '1px solid rgba(200,150,70,0.25)',
+    borderRadius: 8,
+    background: 'rgba(20,12,6,0.6)',
+    color: '#e8dcc8',
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: 'pointer',
+  },
+  aiSpeedBtnActive: {
+    borderColor: '#ffd700',
+    background: 'rgba(245,197,24,0.18)',
+    color: '#ffd700',
   },
 };
