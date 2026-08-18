@@ -25,6 +25,13 @@ const v = buildVersion()
 
 export default defineConfig({
   plugins: [react()],
+  server: {
+    // Expose the dev server on the LAN so phones on the same WiFi can load the
+    // game from the Mac (Family games hosted off your own machine).
+    host: true,
+    port: 5173,
+    strictPort: true,
+  },
   define: {
     __APP_VERSION__: JSON.stringify(`${v.hash} ${v.ts}`),
   },

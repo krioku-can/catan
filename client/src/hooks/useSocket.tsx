@@ -2,8 +2,7 @@ import { createContext, useContext, useEffect, useState, useCallback, useRef, ty
 import { io, Socket } from 'socket.io-client';
 import type { GameState, PlayerColor } from '../game/types';
 import { enableTurnPush, pushPrefOn } from '../push';
-
-const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
+import { SERVER_URL } from '../serverUrl';
 const SESSION_KEY = 'catan_online_session';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'waking';

@@ -1,7 +1,7 @@
 // Core game rules and state management
 
 import type { GameState, GameConfig, Player, PlayerColor, ResourceType, DevelopmentCard, HexTile, Edge } from './types.js';
-import { generateBoard, canPlaceSettlement, canPlaceRoad, getResourceProduction, getAdjacentIntersections, getEdgesForIntersection, getHexCorners, getPortRate } from './board';
+import { generateBoard, canPlaceSettlement, canPlaceRoad, getResourceProduction, getAdjacentIntersections, getEdgesForIntersection, getHexCorners, getPortRate } from './board.js';
 
 const RESOURCES: ResourceType[] = ['brick', 'lumber', 'wool', 'grain', 'ore'];
 

@@ -10,6 +10,22 @@ import { dropSubscription, getVapidPublicKey, notifyPlayer, saveSubscription, sh
 
 const PORT = parseInt(process.env.PORT || '3001');
 const CORS_ORIGIN = process.env.CORS_ORIGIN || 'https://catan-lac.vercel.app';
+const HOST = process.env.HOST || '0.0.0.0'; // bind all interfaces so LAN devices can reach us
+// Allow the LAN dev server (http://<mac>:5173) and any localhost origin.
+const ALLOWED_ORIGINS = new Set<string>([
+  CORS_ORIGIN,
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+]);
+const corsOriginFn = (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
+  if (!origin) return cb(null, true); // non-browser / same-origin
+  if (ALLOWED_ORIGINS.has(origin)) return cb(null, true);
+  // Allow any 192.168/10./172.1x LAN origin (phones hitting the Mac dev server).
+  if (/^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(origin)) {
+    return cb(null, true);
+  }
+  cb(null, false);
+};
 
 // ── Room Management ──
 
@@ -101,12 +117,12 @@ function emitGameToRoom(room: Room, action?: string, result?: unknown) {
 // ── Express Setup ──
 
 const app = express();
-app.use(cors({ origin: CORS_ORIGIN }));
+app.use(cors({ origin: corsOriginFn }));
 app.use(express.json());
 
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: CORS_ORIGIN, methods: ['GET', 'POST'] },
+  cors: { origin: corsOriginFn, methods: ['GET', 'POST'] },
 });
 
 // Health check (root + /api/health — Render free tier wake pings)
@@ -868,7 +884,7 @@ function serializeRoom(room: Room) {
 }
 
 // ── Start ──
-server.listen(PORT, () => {
-  console.log(`[server] Catan server running on port ${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`[server] Catan server running on ${HOST}:${PORT}`);
   console.log(`[server] CORS origin: ${CORS_ORIGIN}`);
 });

@@ -1,4 +1,6 @@
-const SERVER_URL = (import.meta.env.VITE_SERVER_URL || 'https://catan-4ieq.onrender.com').replace(/\/$/, '');
+import { SERVER_URL } from './serverUrl';
+
+export { SERVER_URL } from './serverUrl';
 
 export function isStandalone(): boolean {
   return window.matchMedia('(display-mode: standalone)').matches
