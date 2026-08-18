@@ -84,6 +84,7 @@ export function createInitialState(config: GameConfig): GameState {
       citiesRemaining: INITIAL_PIECES.cities,
       victoryPoints: 0,
       isAI: config.aiPlayers.includes(i),
+      aiLevel: config.aiLevel || 'normal',
       devCardsPlayedThisTurn: 0,
       boughtDevCardThisTurn: false,
     });
@@ -965,10 +966,15 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
       });
 
       if (candidates.length > 0) {
-        // Weighted random among top-scoring candidates (pick randomly from the
-        // top 30% by score so it's varied but still resource-aware).
         candidates.sort((a, b) => b.score - a.score);
-        const topCount = Math.max(1, Math.ceil(candidates.length * 0.3));
+        if (player.aiLevel === 'hard') {
+          // Hard: always take the single best spot.
+          return { action: 'place_settlement', data: { key: candidates[0].key } };
+        }
+        // Easy: pick randomly from the whole list (can settle badly).
+        const topCount = player.aiLevel === 'easy'
+          ? candidates.length
+          : Math.max(1, Math.ceil(candidates.length * 0.3));
         const top = candidates.slice(0, topCount);
         const pick = top[Math.floor(Math.random() * top.length)];
         return { action: 'place_settlement', data: { key: pick.key } };
@@ -1121,6 +1127,18 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
       state.pendingDevRoads = 0;
     }
 
+    // Hard AI: try to play a Knight card before building (pursues largest army
+    // and moves the robber to block a leader). Easy AI never does.
+    if (player.aiLevel === 'hard') {
+      const hasKnight = player.devCards.some(
+        c => c.type === 'knight' && !c.played && !c.boughtThisTurn,
+      );
+      if (hasKnight && player.devCardsPlayedThisTurn < 1) {
+        const err = playKnight(state);
+        if (err === null) return { action: 'play_knight' };
+      }
+    }
+
     // Try to build something
     // Priority: city > settlement > dev card > road
 
@@ -1146,9 +1164,10 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
       return { action: 'place_settlement', data: { key: pick.key } };
     }
 
-    // Check dev cards — only if the deck still has cards
+    // Check dev cards — only if the deck still has cards.
+    // Easy AI skips dev cards (plays a more predictable, weaker game).
     const deckLeft = (state.devDeck || []).length;
-    if (deckLeft > 0 && canAfford(player, { ore: 1, wool: 1, grain: 1 })) {
+    if (player.aiLevel !== 'easy' && deckLeft > 0 && canAfford(player, { ore: 1, wool: 1, grain: 1 })) {
       return { action: 'buy_dev_card' };
     }
 

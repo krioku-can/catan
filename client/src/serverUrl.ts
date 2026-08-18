@@ -1,31 +1,68 @@
 /**
  * Resolve the Catan Socket.io server URL.
  *
- * Precedence:
- *   1. Explicit VITE_SERVER_URL (local dev / override)
- *   2. When the app itself is served from a LAN or localhost host (i.e. the
- *      Mac's Vite dev server), talk to the Catan server on that SAME host:port
- *      3001 — this is how phones on the same WiFi reach the local server.
- *   3. Fallback to the public Render server.
+ * The user can choose where to connect:
+ *   - auto (default): LAN when served from a LAN/localhost host, else cloud
+ *   - cloud           always the public Render server
+ *   - lan             always the local LAN server on this host
+ *
+ * Choice is persisted in localStorage so the lobby can surface it and let the
+ * user switch (a reload reconnects the socket with the new server).
  */
-function resolveServerUrl(): string {
-  const explicit = import.meta.env.VITE_SERVER_URL;
-  if (explicit) return explicit.replace(/\/$/, '');
+export type ServerChoice = 'auto' | 'cloud' | 'lan';
 
+const CHOICE_KEY = 'catan_server_choice';
+
+function explicitUrl(): string | null {
+  const explicit = import.meta.env.VITE_SERVER_URL;
+  return explicit ? explicit.replace(/\/$/, '') : null;
+}
+
+function lanUrl(): string {
   const host = window.location.hostname;
-  const isLocal =
+  return `http://${host}:3001`;
+}
+
+function cloudUrl(): string {
+  return explicitUrl() || 'https://catan-4ieq.onrender.com';
+}
+
+function isLocalHost(host: string): boolean {
+  return (
     host === 'localhost' ||
     host === '127.0.0.1' ||
     host === '::1' ||
-    /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host);
-
-  if (isLocal) return `http://${host}:3001`;
-  return 'https://catan-4ieq.onrender.com';
+    /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)
+  );
 }
 
-export const SERVER_URL = resolveServerUrl();
+export function getServerChoice(): ServerChoice {
+  try {
+    const c = localStorage.getItem(CHOICE_KEY);
+    if (c === 'cloud' || c === 'lan') return c;
+  } catch { /* ignore */ }
+  return 'auto';
+}
 
-/** True when the client is pointed at a same-LAN server (host dev box), not the public cloud. */
+export function setServerChoice(c: ServerChoice): void {
+  try { localStorage.setItem(CHOICE_KEY, c); } catch { /* ignore */ }
+}
+
+/** Resolve the server URL for the current (persisted) choice. */
+export function getServerUrl(): string {
+  const choice = getServerChoice();
+
+  if (choice === 'cloud') return cloudUrl();
+  if (choice === 'lan') return lanUrl();
+  // auto
+  return isLocalHost(window.location.hostname) ? lanUrl() : cloudUrl();
+}
+
+/** True when the resolved server is a local LAN host, not the public cloud. */
 export function isLanServer(): boolean {
-  return SERVER_URL.includes('3001') && !SERVER_URL.includes('onrender');
+  const url = getServerUrl();
+  return url.includes('3001') && !url.includes('onrender');
 }
+
+/** Backwards-compatible snapshot (evaluated once at import time). */
+export const SERVER_URL = getServerUrl();

@@ -4,6 +4,7 @@ import Lobby from './components/Lobby';
 import OnlineGame from './components/OnlineGame';
 import Game from './components/Game';
 import Profile from './components/Profile';
+import ServerPicker from './components/ServerPicker';
 import { getStored, setStored } from './storage';
 import { APP_VERSION } from './version';
 
@@ -74,6 +75,8 @@ function Home({ onPick }: { onPick: (m: Mode) => void }) {
           📊 My Stats
           <span style={styles.btnHint}>Track wins, losses, and history</span>
         </button>
+
+        <ServerPicker />
       </div>
     </div>
   );

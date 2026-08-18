@@ -976,6 +976,7 @@ function SetupScreen({
   const [victoryPointsToWin, setVictoryPointsToWin] = useState<10 | 12>(10);
   const [friendlyRobber, setFriendlyRobber] = useState(true);
   const [boardMode, setBoardMode] = useState<'random' | 'balanced'>('balanced');
+  const [aiLevel, setAiLevel] = useState<'easy' | 'normal' | 'hard'>('normal');
 
   return (
     <div className="scroll-page" style={styles.setupScreen}>
@@ -1078,6 +1079,25 @@ function SetupScreen({
           How long each AI waits between moves · saved for next game
         </p>
 
+        <label style={styles.label}>AI difficulty</label>
+        <div style={styles.playerCountRow}>
+          {(['easy', 'normal', 'hard'] as const).map(l => (
+            <button
+              key={l}
+              type="button"
+              style={{ ...styles.countBtn, ...(aiLevel === l ? styles.countBtnActive : {}) }}
+              onClick={() => setAiLevel(l)}
+            >
+              {l === 'easy' ? '😌 Easy' : l === 'normal' ? '⚖️ Normal' : '🔥 Hard'}
+            </button>
+          ))}
+        </div>
+        <p style={styles.toggleHint}>
+          {aiLevel === 'easy' && 'AI makes weaker, less efficient moves.'}
+          {aiLevel === 'normal' && 'Balanced AI — a fair challenge.'}
+          {aiLevel === 'hard' && 'AI always picks the best spot & uses dev cards aggressively.'}
+        </p>
+
         <label style={styles.toggleRow}>
           <input
             type="checkbox"
@@ -1105,6 +1125,7 @@ function SetupScreen({
               victoryPointsToWin,
               friendlyRobber,
               boardMode,
+              aiLevel,
             })}
           >
             Start Game

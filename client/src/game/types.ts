@@ -53,6 +53,8 @@ export interface DevelopmentCard {
   boughtThisTurn?: boolean;
 }
 
+export type AiLevel = 'easy' | 'normal' | 'hard';
+
 export interface Player {
   color: PlayerColor;
   name: string;
@@ -64,6 +66,8 @@ export interface Player {
   citiesRemaining: number;
   victoryPoints: number;
   isAI: boolean;
+  /** Difficulty for this AI player (defaults to 'normal'). */
+  aiLevel?: AiLevel;
   /** Number of dev cards played this turn (enforces 1-per-turn rule). */
   devCardsPlayedThisTurn: number;
   /** @deprecated Prefer per-card boughtThisTurn. Kept for older state. */
@@ -140,4 +144,6 @@ export interface GameConfig {
   friendlyRobber?: boolean;
   /** random = shuffle; balanced = avoid clustered high-pips + resource clumps. */
   boardMode?: 'random' | 'balanced';
+  /** Difficulty for all AI players. Defaults to 'normal'. */
+  aiLevel?: AiLevel;
 }
