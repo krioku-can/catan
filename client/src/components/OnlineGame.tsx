@@ -114,7 +114,9 @@ export default function OnlineGame() {
   const handleRollDice = useCallback(() => {
     sendAction('roll_dice');
   }, [sendAction]);
-
+  const handleTurnOrder = useCallback(() => {
+    sendAction('roll_turn_order');
+  }, [sendAction]);
   const handleEndTurn = useCallback(() => {
     sendAction('end_turn');
     setSelectedAction(null);
@@ -195,6 +197,23 @@ export default function OnlineGame() {
   const isMyTurn = myPlayer?.color === player.color;
   return (
     <div style={styles.container}>
+      {/* Turn-order roll screen (before setup) */}
+      {gameState.phase === 'turn_order' && (
+        <div style={styles.turnOrderScreen}>
+          <h2 style={styles.turnOrderTitle}>🎲 Roll for Turn Order</h2>
+          <p style={styles.turnOrderSub}>
+            Each player rolls 2 dice. Highest roll places first.
+          </p>
+          <button
+            type="button"
+            style={styles.turnOrderBtn}
+            onClick={handleTurnOrder}
+          >
+            🎲 Roll
+          </button>
+        </div>
+      )}
+
       {/* Top score bar — Catan Universe style */}
       <div style={styles.topBar}>
         <ScoreBar
@@ -522,6 +541,18 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '8px 16px',
     background: 'rgba(0,0,0,0.6)',
     zIndex: 5,
+  },
+  turnOrderScreen: {
+    position: 'fixed', inset: 0, zIndex: 60,
+    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+    background: 'rgba(0,0,0,0.85)', gap: 16, padding: 24,
+  },
+  turnOrderTitle: { color: '#ffd700', fontSize: 24, fontWeight: 'bold', margin: 0, textAlign: 'center' },
+  turnOrderSub: { color: '#c4b49a', fontSize: 14, margin: 0, textAlign: 'center', maxWidth: 300 },
+  turnOrderBtn: {
+    padding: '14px 28px', border: 'none', borderRadius: 10,
+    background: 'linear-gradient(135deg, #e94560, #c23152)', color: 'white',
+    fontSize: 16, fontWeight: 'bold', cursor: 'pointer',
   },
   stealOverlay: {
     position: 'fixed', inset: 0, zIndex: 50,

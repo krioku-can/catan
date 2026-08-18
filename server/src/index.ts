@@ -4,7 +4,7 @@ import cors from 'cors';
 import { Server } from 'socket.io';
 import { v4 as uuidv4 } from 'uuid';
 import type { GameState, GameConfig, PlayerColor, ResourceType } from './game/types.js';
-import { createInitialState, getCurrentPlayer, getPlayerByColor, rollDice, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, executeBankTrade, proposePublicTrade, respondToTrade, completeTradeWith, cancelTradeOffer, normalizePlayerDevCards, countHeldDevCards, getStealTargets, stealFrom } from './game/rules.js';
+import { createInitialState, getCurrentPlayer, getPlayerByColor, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, executeBankTrade, proposePublicTrade, respondToTrade, completeTradeWith, cancelTradeOffer, normalizePlayerDevCards, countHeldDevCards, getStealTargets, stealFrom } from './game/rules.js';
 import { getHexCorners, getPortRate } from './game/board.js';
 import { dropSubscription, getVapidPublicKey, notifyPlayer, saveSubscription, shouldPush, type PushSub } from './push.js';
 
@@ -484,6 +484,16 @@ io.on('connection', (socket) => {
     let result: any = null;
 
     switch (action) {
+      case 'roll_turn_order': {
+        // Human rolls for turn order (mirrors the AI path). Sets turnOrder,
+        // currentTurn=0, and advances to the first setup settlement.
+        if (gs.phase !== 'turn_order') return;
+        const res = rollTurnOrder(gs);
+        gs.phase = 'setup_settlement';
+        gs.setupRound = 0;
+        result = { order: res.order, rolls: res.rolls };
+        break;
+      }
       case 'roll_dice': {
         const [d1, d2] = rollDice(gs);
         result = { dice: [d1, d2], total: d1 + d2 };
