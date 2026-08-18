@@ -26,7 +26,12 @@ export default function TradeOffers({ gameState, myColor, onAccept, onReject, on
   const [give, setGive] = useState<Partial<Record<ResourceType, number>>>({});
   const [want, setWant] = useState<Partial<Record<ResourceType, number>>>({});
 
-  const offers = gameState.tradeOffers.filter(o => o.to === myColor);
+  const offers = gameState.tradeOffers.filter(o => {
+    if (o.from === myColor) return false;
+    if ((o.rejectedBy || []).includes(myColor)) return false;
+    if (o.to === undefined) return true;
+    return o.to === myColor;
+  });
   if (offers.length === 0) return null;
 
   const myPlayer = getPlayerByColor(gameState, myColor);
@@ -50,14 +55,19 @@ export default function TradeOffers({ gameState, myColor, onAccept, onReject, on
       {offers.map((offer, i) => {
         const from = getPlayerByColor(gameState, offer.from);
         const isCountering = countering === offer.from;
+        const iAccepted = (offer.acceptedBy || []).includes(myColor);
+        const isPublic = offer.to === undefined;
         return (
           <div key={i} style={styles.offer}>
             <div style={styles.text}>
               <strong style={{ color: from?.color }}>{from?.name}</strong> offers
               {' '}{fmtRes(offer.give)} for {fmtRes(offer.want)}
+              {isPublic && <span style={styles.tableTag}> · table offer</span>}
             </div>
 
-            {!isCountering ? (
+            {iAccepted ? (
+              <div style={styles.waiting}>You accepted — waiting for them to pick a partner</div>
+            ) : !isCountering ? (
               <div style={styles.actions}>
                 <button style={styles.acceptBtn} onClick={() => onAccept(offer.from)}>✓ Accept</button>
                 <button style={styles.counterBtn} onClick={() => startCounter(offer.from)}>↔ Counter</button>
@@ -141,6 +151,8 @@ const styles: Record<string, React.CSSProperties> = {
   container: { display: 'flex', flexDirection: 'column', gap: 8, background: '#0f3460', borderRadius: 8, padding: 10 },
   offer: { display: 'flex', flexDirection: 'column', gap: 8, background: '#1a1a2e', borderRadius: 8, padding: '8px 10px' },
   text: { fontSize: 13, color: '#e0e0e0', lineHeight: 1.4 },
+  tableTag: { fontSize: 11, color: '#ffd700' },
+  waiting: { fontSize: 12, color: '#2ecc71', fontWeight: 'bold' },
   actions: { display: 'flex', gap: 6, flexWrap: 'wrap' },
   acceptBtn: {
     padding: '6px 12px', border: 'none', borderRadius: 6,

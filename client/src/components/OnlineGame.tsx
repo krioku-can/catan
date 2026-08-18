@@ -137,8 +137,16 @@ export default function OnlineGame() {
     sendAction('bank_trade', { give, want });
   }, [sendAction]);
 
-  const handleProposeTrade = useCallback((to: PlayerColor, give: Partial<Record<ResourceType, number>>, want: Partial<Record<ResourceType, number>>) => {
-    sendAction('propose_trade', { to, give, want });
+  const handleProposeTrade = useCallback((give: Partial<Record<ResourceType, number>>, want: Partial<Record<ResourceType, number>>) => {
+    sendAction('propose_trade', { give, want });
+  }, [sendAction]);
+
+  const handleCompleteTrade = useCallback((partner: PlayerColor) => {
+    sendAction('complete_trade', { partner });
+  }, [sendAction]);
+
+  const handleCancelOffer = useCallback(() => {
+    sendAction('cancel_trade');
   }, [sendAction]);
 
   const handleDiscard = useCallback((discard: Partial<Record<ResourceType, number>>) => {
@@ -340,6 +348,8 @@ export default function OnlineGame() {
                       phase={gameState.phase}
                       onBankTrade={handleBankTrade}
                       onProposeTrade={handleProposeTrade}
+                      onCompleteTrade={handleCompleteTrade}
+                      onCancelOffer={handleCancelOffer}
                     />
                     <DevCardPanel
                       player={myPlayer || player}

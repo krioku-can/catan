@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { GameState, ResourceType, PlayerColor, TurnPhase } from '../game/types';
+import type { GameState, PlayerColor, ResourceType, TurnPhase } from '../game/types';
 import { getCurrentPlayer } from '../game/rules';
 import { getPortRate, getOwnedPorts } from '../game/board';
 
@@ -8,7 +8,9 @@ interface TradePanelProps {
   isMyTurn: boolean;
   phase: TurnPhase;
   onBankTrade: (give: Partial<Record<ResourceType, number>>, want: Partial<Record<ResourceType, number>>) => void;
-  onProposeTrade: (to: PlayerColor, give: Partial<Record<ResourceType, number>>, want: Partial<Record<ResourceType, number>>) => void;
+  onProposeTrade: (give: Partial<Record<ResourceType, number>>, want: Partial<Record<ResourceType, number>>) => void;
+  onCompleteTrade?: (partner: PlayerColor) => void;
+  onCancelOffer?: () => void;
 }
 
 const RESOURCES: ResourceType[] = ['brick', 'lumber', 'wool', 'grain', 'ore'];
@@ -21,7 +23,7 @@ const RESOURCE_NAMES: Record<ResourceType, string> = {
 
 type Tab = 'bank' | 'players';
 
-export default function TradePanel({ gameState, isMyTurn, phase, onBankTrade, onProposeTrade }: TradePanelProps) {
+export default function TradePanel({ gameState, isMyTurn, phase, onBankTrade, onProposeTrade, onCompleteTrade, onCancelOffer }: TradePanelProps) {
   const [open, setOpen] = useState(true);
   const [tab, setTab] = useState<Tab>('bank');
   // Bank: single give resource + amount; single want resource.
@@ -31,7 +33,6 @@ export default function TradePanel({ gameState, isMyTurn, phase, onBankTrade, on
   // Domestic: multi-resource give/want maps.
   const [give, setGive] = useState<Partial<Record<ResourceType, number>>>({});
   const [want, setWant] = useState<Partial<Record<ResourceType, number>>>({});
-  const [target, setTarget] = useState<PlayerColor | ''>('');
 
   // Official: trade after production (trade/build), not before the roll.
   if (!isMyTurn || (phase !== 'trade' && phase !== 'build')) return null;
@@ -58,7 +59,7 @@ export default function TradePanel({ gameState, isMyTurn, phase, onBankTrade, on
 
   const totalGive = Object.values(give).reduce((s, n) => s + (n || 0), 0);
   const totalWant = Object.values(want).reduce((s, n) => s + (n || 0), 0);
-  const canPropose = !!target && totalGive > 0 && totalWant > 0;
+  const canPropose = totalGive > 0 && totalWant > 0;
 
   const reset = () => {
     setBankGive(null);
@@ -66,7 +67,6 @@ export default function TradePanel({ gameState, isMyTurn, phase, onBankTrade, on
     setBankWant(null);
     setGive({});
     setWant({});
-    setTarget('');
   };
 
   const handleBankTrade = () => {
@@ -76,8 +76,8 @@ export default function TradePanel({ gameState, isMyTurn, phase, onBankTrade, on
   };
 
   const handlePropose = () => {
-    if (!canPropose || !target) return;
-    onProposeTrade(target, give, want);
+    if (!canPropose) return;
+    onProposeTrade(give, want);
     reset();
   };
 
@@ -261,25 +261,57 @@ export default function TradePanel({ gameState, isMyTurn, phase, onBankTrade, on
                 </div>
               </div>
 
-              <div style={styles.row}>
-                <div style={styles.label}>Trade with</div>
-                <select
-                  style={styles.select}
-                  value={target}
-                  onChange={e => setTarget(e.target.value as PlayerColor)}
-                >
-                  <option value="" disabled>Choose a player…</option>
-                  {gameState.players
-                    .filter(p => p.color !== player.color)
-                    .map(p => (
-                      <option key={p.color} value={p.color}>
-                        {p.name} {p.isAI ? '🤖' : ''}
-                      </option>
-                    ))}
-                </select>
+              <div style={styles.hint}>
+                Offer goes to the whole table. Players accept or decline — then you pick who to trade with.
               </div>
             </>
           )}
+
+          {(() => {
+            const outgoing = gameState.tradeOffers.find(o => o.from === player.color && o.to === undefined);
+            if (!outgoing) return null;
+            const others = gameState.players.filter(p => p.color !== player.color);
+            const accepted = outgoing.acceptedBy || [];
+            const rejected = outgoing.rejectedBy || [];
+            return (
+              <div style={styles.outgoing}>
+                <div style={styles.outgoingTitle}>Table offer is out</div>
+                <div style={styles.outgoingHint}>
+                  {accepted.length === 0
+                    ? 'Waiting for players to accept…'
+                    : 'Pick who to complete the trade with:'}
+                </div>
+                <div style={styles.partnerRow}>
+                  {others.map(p => {
+                    const inYes = accepted.includes(p.color);
+                    const inNo = rejected.includes(p.color);
+                    return (
+                      <button
+                        key={p.color}
+                        style={{
+                          ...styles.partnerBtn,
+                          borderColor: p.color,
+                          ...(inYes ? styles.partnerYes : {}),
+                          ...(inNo ? styles.partnerNo : {}),
+                        }}
+                        disabled={!inYes || !onCompleteTrade}
+                        onClick={() => inYes && onCompleteTrade?.(p.color)}
+                      >
+                        <span style={{ ...styles.partnerDot, background: p.color }} />
+                        {p.name}
+                        <span style={styles.partnerStatus}>
+                          {inYes ? 'Accepted' : inNo ? 'Declined' : 'Waiting'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {onCancelOffer && (
+                  <button style={styles.withdrawBtn} onClick={onCancelOffer}>Withdraw offer</button>
+                )}
+              </div>
+            );
+          })()}
 
           <div style={styles.btnRow}>
             <button
@@ -294,7 +326,7 @@ export default function TradePanel({ gameState, isMyTurn, phase, onBankTrade, on
                 ? canBankTrade
                   ? `Trade ${bankGiveAmt} → ${bankReceived}`
                   : `Trade ${rate}:1`
-                : 'Send Offer'}
+                : 'Offer to All'}
             </button>
             <button style={styles.resetBtn} onClick={reset} title="Clear selection">
               ↺ Reset
@@ -340,10 +372,6 @@ const styles: Record<string, React.CSSProperties> = {
   rateTag: { fontSize: 9, color: '#3498db' },
   rateRow: { padding: '8px 10px', background: '#1a1a2e', borderRadius: 6 },
   rateText: { fontSize: 12, color: '#ffd700', fontWeight: 'bold' },
-  select: {
-    width: '100%', padding: '8px 10px', border: '1px solid #1a1a2e', borderRadius: 6,
-    background: '#1a1a2e', color: '#e0e0e0', fontSize: 13,
-  },
   tradeBtn: {
     flex: 1, padding: '10px 12px', border: 'none', borderRadius: 6,
     background: 'linear-gradient(135deg, #3498db, #2980b9)',
@@ -355,5 +383,25 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '10px 12px', border: '1px solid #8890a0', borderRadius: 6,
     background: 'transparent', color: '#8890a0', fontSize: 13, fontWeight: 'bold', cursor: 'pointer',
     flexShrink: 0,
+  },
+  outgoing: {
+    marginTop: 4, padding: 8, background: '#16213e', borderRadius: 6,
+    display: 'flex', flexDirection: 'column', gap: 6,
+  },
+  outgoingTitle: { fontSize: 12, color: '#ffd700', fontWeight: 'bold' },
+  outgoingHint: { fontSize: 11, color: '#8890a0' },
+  partnerRow: { display: 'flex', flexDirection: 'column', gap: 4 },
+  partnerBtn: {
+    display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
+    border: '1px solid #1a1a2e', borderRadius: 6, background: '#1a1a2e',
+    color: '#e0e0e0', fontSize: 13, fontWeight: 'bold', cursor: 'pointer', textAlign: 'left',
+  },
+  partnerYes: { background: '#143d2a', cursor: 'pointer' },
+  partnerNo: { opacity: 0.45, cursor: 'not-allowed' },
+  partnerDot: { width: 10, height: 10, borderRadius: '50%', flexShrink: 0 },
+  partnerStatus: { marginLeft: 'auto', fontSize: 11, fontWeight: 'normal', color: '#8890a0' },
+  withdrawBtn: {
+    padding: '6px 10px', border: '1px solid #8890a0', borderRadius: 6,
+    background: 'transparent', color: '#8890a0', fontSize: 12, cursor: 'pointer',
   },
 };

@@ -4,7 +4,7 @@ import cors from 'cors';
 import { Server } from 'socket.io';
 import { v4 as uuidv4 } from 'uuid';
 import type { GameState, GameConfig, PlayerColor, ResourceType } from './game/types.js';
-import { createInitialState, getCurrentPlayer, getPlayerByColor, rollDice, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, executeBankTrade, normalizePlayerDevCards, countHeldDevCards, getStealTargets, stealFrom } from './game/rules.js';
+import { createInitialState, getCurrentPlayer, getPlayerByColor, rollDice, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, executeBankTrade, proposePublicTrade, respondToTrade, completeTradeWith, cancelTradeOffer, normalizePlayerDevCards, countHeldDevCards, getStealTargets, stealFrom } from './game/rules.js';
 import { getHexCorners, getPortRate } from './game/board.js';
 
 const PORT = parseInt(process.env.PORT || '3001');
@@ -507,68 +507,52 @@ io.on('connection', (socket) => {
         break;
       }
       case 'propose_trade': {
-        // Domestic trade: the active player proposes a trade to another player.
-        // We store it as a pending offer; the target accepts/rejects via
-        // accept_trade. Only the active player can propose.
+        // Public table offer. Others register interest; proposer completes later.
         const from = conn.color;
-        const to = data.to as PlayerColor;
-        if (from === to) return;
-        const target = gs.players.find(p => p.color === to);
-        if (!target) return;
-        // Validate the proposer has the resources they're offering.
-        for (const [r, n] of Object.entries(data.give || {})) {
-          const amt = Number(n) || 0;
-          if ((getCurrentPlayer(gs).resources[r as ResourceType] || 0) < amt) return;
-        }
-        gs.tradeOffers = gs.tradeOffers.filter(o => o.from !== from || o.to !== to);
-        gs.tradeOffers.push({ from, to, give: data.give, want: data.want });
-        result = { success: true, offer: { from, to, give: data.give, want: data.want } };
+        if (!getCurrentPlayer(gs) || getCurrentPlayer(gs).color !== from) return;
+        const err = proposePublicTrade(gs, data.give, data.want);
+        if (err) return;
+        result = { success: true, offer: { from, give: data.give, want: data.want } };
         break;
       }
       case 'accept_trade': {
-        // The target accepts a pending trade offer from the active player.
-        const offer = gs.tradeOffers.find(o => o.to === conn.color && (!data.from || o.from === data.from));
-        if (!offer) return;
-        const from = getPlayerByColor(gs, offer.from);
-        const to = getPlayerByColor(gs, offer.to);
-        // Validate both sides have the resources.
-        for (const [r, n] of Object.entries(offer.give || {})) {
-          if ((from.resources[r as ResourceType] || 0) < (Number(n) || 0)) return;
-        }
-        for (const [r, n] of Object.entries(offer.want || {})) {
-          if ((to.resources[r as ResourceType] || 0) < (Number(n) || 0)) return;
-        }
-        // Execute the trade.
-        for (const [r, n] of Object.entries(offer.give || {})) {
-          from.resources[r as ResourceType] -= Number(n) || 0;
-          to.resources[r as ResourceType] = (to.resources[r as ResourceType] || 0) + (Number(n) || 0);
-        }
-        for (const [r, n] of Object.entries(offer.want || {})) {
-          to.resources[r as ResourceType] -= Number(n) || 0;
-          from.resources[r as ResourceType] = (from.resources[r as ResourceType] || 0) + (Number(n) || 0);
-        }
-        gs.tradeOffers = gs.tradeOffers.filter(o => o !== offer);
+        const err = respondToTrade(gs, conn.color, data.from, true);
+        if (err) return;
         result = { success: true };
         break;
       }
       case 'reject_trade': {
-        gs.tradeOffers = gs.tradeOffers.filter(o => o.to !== conn.color || (data.from && o.from !== data.from));
+        const err = respondToTrade(gs, conn.color, data.from, false);
+        if (err) return;
+        result = { success: true };
+        break;
+      }
+      case 'complete_trade': {
+        if (!getCurrentPlayer(gs) || getCurrentPlayer(gs).color !== conn.color) return;
+        const err = completeTradeWith(gs, data.partner);
+        if (err) return;
+        result = { success: true, partner: data.partner };
+        break;
+      }
+      case 'cancel_trade': {
+        if (!getCurrentPlayer(gs) || getCurrentPlayer(gs).color !== conn.color) return;
+        cancelTradeOffer(gs, conn.color);
         result = { success: true };
         break;
       }
       case 'counter_trade': {
         // The target counters a pending offer: replace it with a new offer
         // from the target back to the original proposer.
-        const offer = gs.tradeOffers.find(o => o.to === conn.color && o.from === data.from);
+        const offer = gs.tradeOffers.find(o => (o.to === undefined || o.to === conn.color) && o.from === data.from);
         if (!offer) return;
-        const to = getPlayerByColor(gs, offer.to);
+        const to = getPlayerByColor(gs, conn.color);
         // Validate the countering player has the resources they're offering.
         for (const [r, n] of Object.entries(data.give || {})) {
           if ((to.resources[r as ResourceType] || 0) < (Number(n) || 0)) return;
         }
         // Replace the offer with a counter-offer (direction reversed).
         gs.tradeOffers = gs.tradeOffers.filter(o => o !== offer);
-        gs.tradeOffers.push({ from: offer.to, to: offer.from, give: data.give, want: data.want });
+        gs.tradeOffers.push({ from: conn.color, to: offer.from, give: data.give, want: data.want });
         result = { success: true };
         break;
       }
@@ -723,6 +707,8 @@ function runAITurn(room: Room) {
     case 'end_turn':
     case 'accept_trade':
     case 'reject_trade':
+    case 'complete_trade':
+    case 'cancel_trade':
     case 'move_robber': {
       // aiTurn already applied the robber move + steal; just sync the room.
       emitGameToRoom(room, action.action, { success: true });

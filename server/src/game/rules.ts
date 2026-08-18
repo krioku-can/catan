@@ -1,6 +1,6 @@
 // Core game rules and state management
 
-import type { GameState, GameConfig, Player, PlayerColor, ResourceType, DevelopmentCard, HexTile, Edge } from './types';
+import type { GameState, GameConfig, Player, PlayerColor, ResourceType, DevelopmentCard, HexTile, Edge } from './types.js';
 import { generateBoard, canPlaceSettlement, canPlaceRoad, getResourceProduction, getAdjacentIntersections, getEdgesForIntersection, getHexCorners, getPortRate } from './board';
 
 const RESOURCES: ResourceType[] = ['brick', 'lumber', 'wool', 'grain', 'ore'];
@@ -112,6 +112,7 @@ export function createInitialState(config: GameConfig): GameState {
     tradeOffers: [],
     setupPhase: true,
     setupRound: 0,
+    lastSetupSettlement: undefined,
     discardQueue: [],
     pendingDevAction: null,
     pendingDevRoads: 0,
@@ -164,6 +165,120 @@ export function executeTrade(
   return null;
 }
 
+/** Post a public table offer. Anyone can accept; proposer later picks a partner. */
+export function proposePublicTrade(
+  state: GameState,
+  give: Partial<Record<ResourceType, number>>,
+  want: Partial<Record<ResourceType, number>>,
+): string | null {
+  const player = getCurrentPlayer(state);
+  if (state.phase !== 'trade' && state.phase !== 'build') return 'Not trade phase';
+  const giveTotal = Object.values(give || {}).reduce((s, n) => s + (Number(n) || 0), 0);
+  const wantTotal = Object.values(want || {}).reduce((s, n) => s + (Number(n) || 0), 0);
+  if (giveTotal <= 0 || wantTotal <= 0) return 'Offer must give and want something';
+  for (const [r, n] of Object.entries(give || {})) {
+    if ((player.resources[r as ResourceType] || 0) < (Number(n) || 0)) return 'Not enough resources';
+  }
+  state.tradeOffers = state.tradeOffers.filter(o => o.from !== player.color);
+  state.tradeOffers.push({
+    from: player.color,
+    give,
+    want,
+    acceptedBy: [],
+    rejectedBy: [],
+  });
+  return null;
+}
+
+/**
+ * Respond to an offer.
+ * Public offer: registers interest (does NOT execute).
+ * Directed offer (counter): Accept executes immediately.
+ */
+export function respondToTrade(
+  state: GameState,
+  responder: PlayerColor,
+  from: PlayerColor,
+  accept: boolean,
+): string | null {
+  const offer = state.tradeOffers.find(
+    o => o.from === from && (o.to === undefined || o.to === responder),
+  );
+  if (!offer) return 'No offer';
+  if (offer.from === responder) return 'Cannot respond to your own offer';
+
+  if (offer.to === responder) {
+    if (!accept) {
+      state.tradeOffers = state.tradeOffers.filter(o => o !== offer);
+      return null;
+    }
+    const err = executeTrade(state, offer.from, responder, offer.give, offer.want);
+    if (err) return err;
+    state.tradeOffers = state.tradeOffers.filter(o => o !== offer);
+    return null;
+  }
+
+  const other = getPlayerByColor(state, responder);
+  if (!other) return 'Invalid player';
+  offer.acceptedBy = (offer.acceptedBy || []).filter(c => c !== responder);
+  offer.rejectedBy = (offer.rejectedBy || []).filter(c => c !== responder);
+  if (accept) {
+    for (const [r, n] of Object.entries(offer.want || {})) {
+      if ((other.resources[r as ResourceType] || 0) < (Number(n) || 0)) {
+        return 'Not enough resources';
+      }
+    }
+    offer.acceptedBy.push(responder);
+  } else {
+    offer.rejectedBy.push(responder);
+  }
+  return null;
+}
+
+/** Proposer completes a public offer with one player who accepted. */
+export function completeTradeWith(state: GameState, partner: PlayerColor): string | null {
+  const player = getCurrentPlayer(state);
+  const offer = state.tradeOffers.find(o => o.from === player.color && o.to === undefined);
+  if (!offer) return 'No open offer';
+  if (!(offer.acceptedBy || []).includes(partner)) return 'That player has not accepted';
+  const err = executeTrade(state, offer.from, partner, offer.give, offer.want);
+  if (err) return err;
+  state.tradeOffers = state.tradeOffers.filter(o => o !== offer);
+  return null;
+}
+
+export function cancelTradeOffer(state: GameState, color?: PlayerColor): void {
+  const who = color || getCurrentPlayer(state).color;
+  state.tradeOffers = state.tradeOffers.filter(o => o.from !== who);
+}
+
+/** AI players register accept/reject on unanswered public offers. Returns true if anyone responded. */
+export function aiRespondToPublicOffers(state: GameState): boolean {
+  let changed = false;
+  for (const offer of state.tradeOffers) {
+    if (offer.to !== undefined) continue;
+    for (const p of state.players) {
+      if (!p.isAI || p.color === offer.from) continue;
+      if ((offer.acceptedBy || []).includes(p.color)) continue;
+      if ((offer.rejectedBy || []).includes(p.color)) continue;
+      const giveTotal = Object.values(offer.give || {}).reduce((s, n) => s + (Number(n) || 0), 0);
+      const wantTotal = Object.values(offer.want || {}).reduce((s, n) => s + (Number(n) || 0), 0);
+      const surplus = RESOURCES.filter(r => (p.resources[r] || 0) >= 3);
+      const scarce = RESOURCES.filter(r => (p.resources[r] || 0) <= 1);
+      const givesSurplus = Object.keys(offer.want || {}).every(r => surplus.includes(r as ResourceType));
+      const getsScarce = Object.keys(offer.give || {}).some(r => scarce.includes(r as ResourceType));
+      let canPay = true;
+      for (const [r, n] of Object.entries(offer.want || {})) {
+        if ((p.resources[r as ResourceType] || 0) < (Number(n) || 0)) canPay = false;
+      }
+      const favorable = canPay && (wantTotal >= giveTotal || (givesSurplus && getsScarce));
+      respondToTrade(state, p.color, offer.from, favorable);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 // Check if player can afford something
 export function canAfford(player: Player, cost: Partial<Record<ResourceType, number>>): boolean {
   for (const [resource, amount] of Object.entries(cost)) {
@@ -205,6 +320,7 @@ export function placeSetupSettlement(state: GameState, intersectionKey: string):
   inter.owner = player.color;
   player.settlementsRemaining--;
   player.victoryPoints += 1;
+  state.lastSetupSettlement = intersectionKey;
 
   // Official / Catan Universe: ONLY the second settlement grants starting
   // resources — 1 of each resource from every adjacent land hex.
@@ -222,6 +338,21 @@ export function placeSetupSettlement(state: GameState, intersectionKey: string):
   return null; // success
 }
 
+/** The settlement the current setup road must attach to (the one just placed). */
+function getJustPlacedSetupSettlement(state: GameState, color: PlayerColor): string | null {
+  const tagged = state.lastSetupSettlement;
+  if (tagged && state.intersections[tagged]?.owner === color) return tagged;
+
+  // Fallback for older saves that lack lastSetupSettlement: the player's
+  // settlement that currently has no road attached is the one just placed.
+  const mine = Object.values(state.intersections).filter(i => i.owner === color && i.building);
+  const roadCountAt = (key: string) =>
+    Object.values(state.edges).filter(
+      e => e.road === color && (e.from === key || e.to === key),
+    ).length;
+  return mine.find(s => roadCountAt(s.key) === 0)?.key ?? null;
+}
+
 // Place a road during setup
 export function placeSetupRoad(state: GameState, edgeKey: string): string | null {
   const player = getCurrentPlayer(state);
@@ -229,11 +360,12 @@ export function placeSetupRoad(state: GameState, edgeKey: string): string | null
   if (!edge) return 'Invalid edge';
   if (edge.road) return 'Already has a road';
 
-  // Must connect to the settlement just placed
-  const inter = state.intersections[edge.from];
-  const inter2 = state.intersections[edge.to];
-  if (inter?.owner !== player.color && inter2?.owner !== player.color) {
-    return 'Must connect to your settlement';
+  // Official: each setup road must connect to the settlement just placed —
+  // not to an earlier one you already own.
+  const justPlaced = getJustPlacedSetupSettlement(state, player.color);
+  if (!justPlaced) return 'Must connect to the settlement you just placed';
+  if (edge.from !== justPlaced && edge.to !== justPlaced) {
+    return 'Must connect to the settlement you just placed';
   }
 
   edge.road = player.color;
@@ -241,19 +373,38 @@ export function placeSetupRoad(state: GameState, edgeKey: string): string | null
   return null;
 }
 
-// Roll for starting turn order. Each player rolls 2 dice; the player with the
-// highest total goes first, then descending. Returns an ordered array of the
-// resulting player colors plus their individual roll totals.
+// Roll for starting turn order. Each player rolls 2 dice; highest total
+// goes first, then descending. Official: tied opening rolls re-roll until
+// every player has a unique total.
+function roll2d6(): number {
+  return Math.floor(Math.random() * 6) + 1 + Math.floor(Math.random() * 6) + 1;
+}
+
 export function rollTurnOrder(state: GameState): { order: PlayerColor[]; rolls: Record<string, number> } {
   const players = state.players;
   const rolls: Record<string, number> = {};
-  players.forEach(p => {
-    rolls[p.color] = Math.floor(Math.random() * 6) + 1 + (Math.floor(Math.random() * 6) + 1);
-  });
-  // Sort descending by roll; ties broken by player index (stable-ish)
+  for (const p of players) rolls[p.color] = roll2d6();
+
+  let guard = 0;
+  while (guard++ < 80) {
+    const byScore = new Map<number, PlayerColor[]>();
+    for (const p of players) {
+      const s = rolls[p.color];
+      const list = byScore.get(s) || [];
+      list.push(p.color);
+      byScore.set(s, list);
+    }
+    const tied = [...byScore.values()].filter(g => g.length > 1);
+    if (tied.length === 0) break;
+    for (const group of tied) {
+      for (const color of group) rolls[color] = roll2d6();
+    }
+  }
+
   const ordered = [...players].sort((a, b) => {
     const diff = (rolls[b.color] || 0) - (rolls[a.color] || 0);
     if (diff !== 0) return diff;
+    // Only reachable if the re-roll loop hit the guard (extremely rare).
     return players.indexOf(a) - players.indexOf(b);
   });
   state.turnOrder = ordered.map(p => p.color);
@@ -676,6 +827,7 @@ export function advanceSetup(state: GameState): void {
     state.setupPhase = false;
     state.phase = 'roll';
     state.currentTurn = 0;
+    state.lastSetupSettlement = undefined;
     return;
   }
 
@@ -867,33 +1019,31 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
     return { action: 'roll_dice' };
   }
 
-  // Respond to any pending domestic trade offers directed at this AI.
+  // Respond to any pending domestic trade offers directed at this AI, or
+  // public offers (to === undefined) that any player may accept.
   // The AI accepts if the trade is favorable (it gives away resources it has
   // plenty of, and receives resources it's short on); otherwise it rejects.
-  const myOffer = state.tradeOffers.find(o => o.to === player.color);
+  const myOffer = state.tradeOffers.find(o => o.from !== player.color && (o.to === undefined || o.to === player.color) && !(o.rejectedBy || []).includes(player.color) && !(o.acceptedBy || []).includes(player.color));
   if (myOffer) {
     const from = getPlayerByColor(state, myOffer.from);
     if (from) {
-      // Count what the AI would give vs receive.
       const giveTotal = Object.values(myOffer.give || {}).reduce((s, n) => s + (Number(n) || 0), 0);
       const wantTotal = Object.values(myOffer.want || {}).reduce((s, n) => s + (Number(n) || 0), 0);
-      // Favor trades where the AI gives away fewer cards than it receives,
-      // or where it gives surplus and receives a scarce resource.
       const surplus = RESOURCES.filter(r => (player.resources[r] || 0) >= 3);
       const scarce = RESOURCES.filter(r => (player.resources[r] || 0) <= 1);
-      const givesSurplus = Object.keys(myOffer.give || {}).every(r => surplus.includes(r as ResourceType));
-      const getsScarce = Object.keys(myOffer.want || {}).some(r => scarce.includes(r as ResourceType));
-      const favorable = wantTotal >= giveTotal || (givesSurplus && getsScarce);
-      if (favorable) {
-        const err = executeTrade(state, myOffer.from, myOffer.to, myOffer.give, myOffer.want);
-        if (err === null) {
-          state.tradeOffers = state.tradeOffers.filter(o => o !== myOffer);
-          return { action: 'accept_trade', data: { from: myOffer.from } };
-        }
-      }
-      state.tradeOffers = state.tradeOffers.filter(o => o !== myOffer);
-      return { action: 'reject_trade', data: { from: myOffer.from } };
+      const givesSurplus = Object.keys(myOffer.want || {}).every(r => surplus.includes(r as ResourceType));
+      const getsScarce = Object.keys(myOffer.give || {}).some(r => scarce.includes(r as ResourceType));
+      const favorable = wantTotal <= giveTotal || (givesSurplus && getsScarce);
+      respondToTrade(state, player.color, myOffer.from, favorable);
+      return { action: favorable ? 'accept_trade' : 'reject_trade', data: { from: myOffer.from } };
     }
+  }
+
+  const myTable = state.tradeOffers.find(o => o.from === player.color && o.to === undefined);
+  if (myTable && (myTable.acceptedBy || []).length > 0) {
+    const partner = myTable.acceptedBy![0];
+    const err = completeTradeWith(state, partner);
+    if (err === null) return { action: 'complete_trade', data: { partner } };
   }
 
   // Discard phase after a 7: AI discards half its hand automatically.

@@ -74,9 +74,14 @@ export type TurnPhase = 'roll' | 'trade' | 'build' | 'discard' | 'setup_settleme
 
 export interface TradeOffer {
   from: PlayerColor;
-  to: PlayerColor;
+  /** Target player. When undefined, the offer is public — visible to ALL other players. */
+  to?: PlayerColor;
   give: Partial<Record<ResourceType, number>>;
   want: Partial<Record<ResourceType, number>>;
+  /** Players who said yes to a public offer. Proposer picks one to complete. */
+  acceptedBy?: PlayerColor[];
+  /** Players who declined a public offer. */
+  rejectedBy?: PlayerColor[];
 }
 
 export interface GameState {
@@ -105,6 +110,8 @@ export interface GameState {
   winner?: PlayerColor;
   setupPhase: boolean;
   setupRound: number; // 0 = first settlement, 1 = first road, etc.
+  /** Intersection key of the settlement just placed in setup. Setup road must attach here. */
+  lastSetupSettlement?: string;
   /** Players who still need to discard half their hand after a 7. */
   discardQueue: PlayerColor[];
   /** Pending dev-card action awaiting placement (road_building). */

@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { GameState, GameConfig, PlayerColor, ResourceType } from '../game/types';
-import { createInitialState, getCurrentPlayer, getPlayerByColor, executeTrade, executeBankTrade, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, countHeldDevCards, getStealTargets, stealFrom } from '../game/rules';
+import { createInitialState, getCurrentPlayer, getPlayerByColor, executeBankTrade, proposePublicTrade, respondToTrade, completeTradeWith, cancelTradeOffer, aiRespondToPublicOffers, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, countHeldDevCards, getStealTargets, stealFrom } from '../game/rules';
 import { getHexCorners } from '../game/board';
 import Board from './Board';
 import PlayerHand from './PlayerHand';
@@ -145,6 +145,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
         if (saved.friendlyRobber == null) saved.friendlyRobber = false;
         if (!saved.boardMode) saved.boardMode = 'random';
         if (saved.pendingRobberMove == null) saved.pendingRobberMove = false;
+        // lastSetupSettlement is optional; older saves fall back to the 0-road settlement.
         setGameState(saved);
         setShowSetup(false);
         addLog('Resumed saved game');
@@ -776,23 +777,21 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           gameState={gameState}
           myColor={me.color}
           onAccept={(from) => {
-            const offer = gameState.tradeOffers.find(o => o.to === me.color && o.from === from);
-            if (offer) {
-              const err = executeTrade(gameState, offer.from, offer.to, offer.give, offer.want);
-              if (err === null) {
-                gameState.tradeOffers = gameState.tradeOffers.filter(o => o !== offer);
-                addLog(`Trade accepted with ${getPlayerByColor(gameState, from)?.name}`);
-              }
+            const err = respondToTrade(gameState, me.color, from, true);
+            if (err === null) {
+              addLog(gameState.tradeOffers.find(o => o.from === from && o.to === undefined)
+                ? `You accepted ${getPlayerByColor(gameState, from)?.name}'s table offer`
+                : `Trade completed with ${getPlayerByColor(gameState, from)?.name}`);
             }
             setGameState({ ...gameState });
           }}
           onReject={(from) => {
-            gameState.tradeOffers = gameState.tradeOffers.filter(o => !(o.to === me.color && o.from === from));
-            addLog(`Trade rejected with ${getPlayerByColor(gameState, from)?.name}`);
+            respondToTrade(gameState, me.color, from, false);
+            addLog(`You declined ${getPlayerByColor(gameState, from)?.name}'s offer`);
             setGameState({ ...gameState });
           }}
           onCounter={(from, give, want) => {
-            const offer = gameState.tradeOffers.find(o => o.to === me.color && o.from === from);
+            const offer = gameState.tradeOffers.find(o => (o.to === undefined || o.to === me.color) && o.from === from);
             if (offer) {
               gameState.tradeOffers = gameState.tradeOffers.filter(o => o !== offer);
               gameState.tradeOffers.push({ from: me.color, to: from, give, want });
@@ -844,9 +843,25 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
                             setGameState({ ...gameState });
                           }
                         }}
-                        onProposeTrade={(to, give, want) => {
-                          gameState.tradeOffers.push({ from: player.color, to, give, want });
-                          addLog(`${player.name} offered a trade to ${getPlayerByColor(gameState, to)?.name}`);
+                        onProposeTrade={(give, want) => {
+                          const err = proposePublicTrade(gameState, give, want);
+                          if (err === null) {
+                            addLog(`${player.name} offered a trade to the table`);
+                            aiRespondToPublicOffers(gameState);
+                            setGameState({ ...gameState });
+                          }
+                        }}
+                        onCompleteTrade={(partner) => {
+                          const name = getPlayerByColor(gameState, partner)?.name;
+                          const err = completeTradeWith(gameState, partner);
+                          if (err === null) {
+                            addLog(`${player.name} traded with ${name}`);
+                            setGameState({ ...gameState });
+                          }
+                        }}
+                        onCancelOffer={() => {
+                          cancelTradeOffer(gameState);
+                          addLog(`${player.name} withdrew the table offer`);
                           setGameState({ ...gameState });
                         }}
                       />
