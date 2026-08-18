@@ -1285,7 +1285,7 @@ const styles: Record<string, React.CSSProperties> = {
   colorDot: { width: 14, height: 14, borderRadius: '50%', flexShrink: 0 },
   nameInput: {
     flex: 1, padding: '8px 12px', border: '1px solid rgba(200,150,70,0.3)', borderRadius: 6,
-    background: 'rgba(20,12,6,0.7)', color: '#f5efe4', fontSize: 14,
+    background: 'rgba(20,12,6,0.7)', color: '#f5efe4', fontSize: 16,
   },
   aiCheckbox: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, color: '#c4b49a' },
   setupActions: {

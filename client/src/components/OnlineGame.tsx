@@ -609,7 +609,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 8,
     background: '#1a1a2e',
     color: '#e0e0e0',
-    fontSize: 14,
+    fontSize: 16,
   },
   chatSendBtn: {
     padding: '8px 16px',

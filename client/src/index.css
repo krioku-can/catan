@@ -4,10 +4,13 @@ body,
 #root {
   width: 100%;
   height: 100%;
+  height: 100dvh;
+  height: -webkit-fill-available;
   margin: 0;
   padding: 0;
   overflow: hidden;
   background: #3a2412;
+  overscroll-behavior: none;
 }
 
 #root {
