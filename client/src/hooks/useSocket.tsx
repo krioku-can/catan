@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
 import { io, Socket } from 'socket.io-client';
 import type { GameState, PlayerColor } from '../game/types';
+import { enableTurnPush, pushPrefOn } from '../push';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
 const SESSION_KEY = 'catan_online_session';
@@ -191,6 +192,26 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     socketRef.current = s;
     setSocket(s);
   }, [tryRejoin]);
+
+  useEffect(() => {
+    if (!socket) return;
+    const send = () => socket.emit('presence', { visible: document.visibilityState === 'visible' });
+    send();
+    document.addEventListener('visibilitychange', send);
+    window.addEventListener('focus', send);
+    const blur = () => socket.emit('presence', { visible: false });
+    window.addEventListener('blur', blur);
+    return () => {
+      document.removeEventListener('visibilitychange', send);
+      window.removeEventListener('focus', send);
+      window.removeEventListener('blur', blur);
+    };
+  }, [socket]);
+
+  useEffect(() => {
+    if (!playerId || !pushPrefOn()) return;
+    void enableTurnPush(playerId);
+  }, [playerId]);
 
   useEffect(() => {
     let cancelled = false;

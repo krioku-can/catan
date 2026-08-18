@@ -14,6 +14,7 @@ import DiscardModal from './DiscardModal';
 import DevCardPanel from './DevCardPanel';
 import TradeOffers from './TradeOffers';
 import TurnCoach from './TurnCoach';
+import PushToggle from './PushToggle';
 import { unlockAudio, sfx, isMuted, setMuted } from '../audio';
 import { getTurnCoach } from '../turnCoach';
 
@@ -365,6 +366,7 @@ export default function OnlineGame() {
                         ✅ Done Trading
                       </button>
                     )}
+                    <PushToggle playerId={playerId} />
                   </>
                 )}
                 {gameState.setupPhase && (

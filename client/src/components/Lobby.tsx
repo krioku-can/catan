@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useSocket, fetchRooms } from '../hooks/useSocket';
 import { getStored, setStored } from '../storage';
+import PushToggle from './PushToggle';
 
 export default function Lobby({ onBack, initialRoomCode }: { onBack?: () => void; initialRoomCode?: string }) {
   const { connected, connectionMessage, room, playerId, createRoom, joinRoom, toggleReady, addAI, removeAI, startGame, updateSettings, leaveRoom, retryConnect } = useSocket();
@@ -81,6 +82,8 @@ export default function Lobby({ onBack, initialRoomCode }: { onBack?: () => void
           <button type="button" style={styles.shareBtn} onClick={handleShare}>
             {copied ? '✅ Link Copied!' : '🔗 Share Room Link'}
           </button>
+
+          <PushToggle playerId={playerId} />
 
           <div style={styles.playerList}>
             {room.players.map(p => (

@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { GameState, GameConfig, PlayerColor, ResourceType } from './game/types.js';
 import { createInitialState, getCurrentPlayer, getPlayerByColor, rollDice, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, executeBankTrade, proposePublicTrade, respondToTrade, completeTradeWith, cancelTradeOffer, normalizePlayerDevCards, countHeldDevCards, getStealTargets, stealFrom } from './game/rules.js';
 import { getHexCorners, getPortRate } from './game/board.js';
+import { dropSubscription, getVapidPublicKey, notifyPlayer, saveSubscription, shouldPush, type PushSub } from './push.js';
 
 const PORT = parseInt(process.env.PORT || '3001');
 const CORS_ORIGIN = process.env.CORS_ORIGIN || 'https://catan-lac.vercel.app';
@@ -31,6 +32,7 @@ interface PlayerConnection {
   color: PlayerColor;
   isAI: boolean;
   ready: boolean;
+  visible?: boolean;
 }
 
 const rooms = new Map<string, Room>();
@@ -115,6 +117,95 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', rooms: rooms.size });
 });
 
+app.get('/api/push/vapid-public-key', (_req, res) => {
+  res.json({ publicKey: getVapidPublicKey() });
+});
+
+app.post('/api/push/subscribe', (req, res) => {
+  const playerId = String(req.body?.playerId || '');
+  const subscription = req.body?.subscription as PushSub | undefined;
+  if (!playerId || !subscription?.endpoint) {
+    res.status(400).json({ error: 'playerId and subscription required' });
+    return;
+  }
+  saveSubscription(playerId, subscription);
+  res.json({ ok: true });
+});
+
+app.post('/api/push/unsubscribe', (req, res) => {
+  const playerId = String(req.body?.playerId || '');
+  const endpoint = req.body?.endpoint ? String(req.body.endpoint) : undefined;
+  if (!playerId) {
+    res.status(400).json({ error: 'playerId required' });
+    return;
+  }
+  dropSubscription(playerId, endpoint);
+  res.json({ ok: true });
+});
+
+function snapshotTurn(room: Room): { color: PlayerColor | null; discard: PlayerColor[] } {
+  if (!room.gameState) return { color: null, discard: [] };
+  return {
+    color: getCurrentPlayer(room.gameState).color,
+    discard: [...(room.gameState.discardQueue || [])],
+  };
+}
+
+function notifyTurnChange(
+  room: Room,
+  prev: { color: PlayerColor | null; discard: PlayerColor[]; started?: boolean; joinedName?: string },
+) {
+  const url = `/?room=${room.id}`;
+  if (prev.joinedName) {
+    for (const p of room.players) {
+      if (p.isAI || p.name === prev.joinedName) continue;
+      if (!shouldPush(p)) continue;
+      void notifyPlayer(p.playerId, {
+        title: 'Catan',
+        body: `${prev.joinedName} joined room ${room.id}`,
+        tag: `catan-join-${room.id}`,
+        url,
+      });
+    }
+  }
+  if (!room.gameState) return;
+  if (prev.started) {
+    for (const p of room.players) {
+      if (!shouldPush(p)) continue;
+      void notifyPlayer(p.playerId, {
+        title: 'Catan',
+        body: `Game started in room ${room.id}`,
+        tag: `catan-start-${room.id}`,
+        url,
+      });
+    }
+  }
+  const nowDiscard = room.gameState.discardQueue || [];
+  for (const color of nowDiscard) {
+    if (prev.discard.includes(color)) continue;
+    const p = room.players.find(x => x.color === color);
+    if (!p || !shouldPush(p)) continue;
+    void notifyPlayer(p.playerId, {
+      title: 'Catan',
+      body: 'A 7 was rolled — discard half your hand',
+      tag: 'catan-discard',
+      url,
+    });
+  }
+  const current = getCurrentPlayer(room.gameState);
+  if (!current.isAI && current.color !== prev.color && room.gameState.phase !== 'discard') {
+    const p = room.players.find(x => x.color === current.color);
+    if (p && shouldPush(p)) {
+      void notifyPlayer(p.playerId, {
+        title: 'Catan',
+        body: room.gameState.setupPhase ? 'Place your settlement or road' : "It's your turn",
+        tag: 'catan-turn',
+        url,
+      });
+    }
+  }
+}
+
 // List public rooms
 app.get('/api/rooms', (_req, res) => {
   const roomList = Array.from(rooms.values()).map(r => ({
@@ -197,6 +288,7 @@ io.on('connection', (socket) => {
     console.log(`[room] ${name} joined ${roomCode}`);
     callback({ playerId, color });
     io.to(roomCode.toUpperCase()).emit('room_update', serializeRoom(room));
+    notifyTurnChange(room, { color: null, discard: [], joinedName: name || 'Someone' });
   });
 
   // ── Rejoin after refresh / brief disconnect ──
@@ -334,6 +426,7 @@ io.on('connection', (socket) => {
     console.log(`[game] Started in ${roomCode} with ${room.players.length} players · ${config.victoryPointsToWin}VP`);
 
     emitGameToRoom(room);
+    notifyTurnChange(room, { color: null, discard: [], started: true });
   });
 
   // Host updates custom game settings (Catan Universe-style)
@@ -367,6 +460,7 @@ io.on('connection', (socket) => {
     if (!room?.gameState) return;
 
     const gs = room.gameState;
+    const prev = snapshotTurn(room);
     const player = getCurrentPlayer(gs);
     const conn = room.players.find(p => p.socketId === socket.id);
     if (!conn || conn.color !== player.color) return;
@@ -560,6 +654,7 @@ io.on('connection', (socket) => {
 
     if (result !== null) {
       emitGameToRoom(room, action, result);
+      notifyTurnChange(room, prev);
 
       // Check for AI turns
       setTimeout(() => {
@@ -575,6 +670,15 @@ io.on('connection', (socket) => {
 
   socket.on('game_action', ({ action, data }: { action: string; data: any }) => {
     handleGameAction(action, data);
+  });
+
+  // ── Presence (skip push while the tab is focused) ──
+  socket.on('presence', ({ visible }: { visible?: boolean }) => {
+    const roomCode = socketToRoom.get(socket.id);
+    if (!roomCode) return;
+    const room = rooms.get(roomCode);
+    const player = room?.players.find(p => p.socketId === socket.id);
+    if (player) player.visible = !!visible;
   });
 
   // ── Chat ──
@@ -669,6 +773,7 @@ function autoDiscardAIs(gs: NonNullable<Room['gameState']>) {
 function runAITurn(room: Room) {
   if (!room.gameState) return;
   const gs = room.gameState;
+  const prev = snapshotTurn(room);
   const action = aiTurn(gs);
   if (!action) return;
 
@@ -727,6 +832,8 @@ function runAITurn(room: Room) {
       break;
     }
   }
+
+  notifyTurnChange(room, prev);
 
   // Chain AI turns
   setTimeout(() => {
