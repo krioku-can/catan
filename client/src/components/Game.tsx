@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { GameState, GameConfig, PlayerColor, ResourceType } from '../game/types';
-import { createInitialState, getCurrentPlayer, getPlayerByColor, executeBankTrade, proposePublicTrade, respondToTrade, completeTradeWith, cancelTradeOffer, aiRespondToPublicOffers, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, countHeldDevCards, getStealTargets, stealFrom } from '../game/rules';
+import { createInitialState, getCurrentPlayer, getPlayerByColor, executeBankTrade, proposePublicTrade, respondToTrade, completeTradeWith, cancelTradeOffer, aiRespondToPublicOffers, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, countHeldDevCards, getStealTargets, stealFrom, checkVictory } from '../game/rules';
 import Board from './Board';
 import PlayerHand from './PlayerHand';
 import DiceRoller from './DiceRoller';
@@ -115,6 +115,12 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
       return;
     }
     setStored('catan_save', JSON.stringify(gameState));
+  }, [gameState]);
+
+  useEffect(() => {
+    if (!gameState || gameState.winner || gameState.setupPhase) return;
+    checkVictory(gameState);
+    if (gameState.winner) setGameState({ ...gameState });
   }, [gameState]);
 
   const addLog = useCallback((msg: string) => {

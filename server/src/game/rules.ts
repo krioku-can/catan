@@ -608,10 +608,31 @@ export function stealFrom(
   return null;
 }
 
+export function countVictoryPoints(state: GameState, player: Player): number {
+  let vp = 0;
+  for (const inter of Object.values(state.intersections)) {
+    if (inter.owner !== player.color) continue;
+    if (inter.building === 'settlement') vp += 1;
+    else if (inter.building === 'city') vp += 2;
+  }
+  if (state.longestRoad.color === player.color) vp += 2;
+  if (state.largestArmy.color === player.color) vp += 2;
+  vp += (player.devCards || []).filter(c => c.type === 'victory_point').length;
+  return vp;
+}
+
+export function syncVictoryPoints(state: GameState): void {
+  for (const p of state.players) {
+    p.victoryPoints = countVictoryPoints(state, p);
+  }
+}
+
 export function checkVictory(state: GameState): void {
   if (state.setupPhase || state.winner) return;
+  syncVictoryPoints(state);
+  // Official: you win on your turn the moment you have the target VP.
   const p = getCurrentPlayer(state);
-  if ((p.victoryPoints || 0) >= (state.victoryPointsToWin || 10)) {
+  if (p && (p.victoryPoints || 0) >= (state.victoryPointsToWin || 10)) {
     state.winner = p.color;
   }
 }
@@ -876,10 +897,8 @@ export function endTurn(state: GameState): void {
   state.robberMovedThisTurn = false;
   state.pendingRobberMove = false;
 
-  // Official: game ends when a player reaches the VP target on their turn.
-  const vpTarget = state.victoryPointsToWin || 10;
-  if (ending.victoryPoints >= vpTarget) {
-    state.winner = ending.color;
+  checkVictory(state);
+  if (state.winner) {
     state.phase = 'build';
     return;
   }

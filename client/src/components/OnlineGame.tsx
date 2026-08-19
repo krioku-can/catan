@@ -279,6 +279,27 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
   return (
     <div style={styles.container}>
       {leaveModal}
+      {gameState.winner && (
+        <div style={styles.winOverlay}>
+          <div style={styles.winCard}>
+            <div style={styles.winEmoji}>{myPlayer?.color === gameState.winner ? '🏆' : '🎲'}</div>
+            <h2 style={styles.winTitle}>
+              {myPlayer?.color === gameState.winner ? 'You win!' : 'Game over'}
+            </h2>
+            <p style={styles.winSub}>
+              {gameState.players.find(p => p.color === gameState.winner)?.name} wins with{' '}
+              {gameState.players.find(p => p.color === gameState.winner)?.victoryPoints ?? 10} VP
+            </p>
+            <button
+              type="button"
+              style={styles.winBtn}
+              onClick={() => { leaveRoom(); onLeaveTable?.(); }}
+            >
+              Back to lobby
+            </button>
+          </div>
+        </div>
+      )}
       {gameState.phase === 'turn_order' && (
         <div style={styles.turnOrderScreen}>
           <p style={styles.turnOrderKicker}>Family table {room.id}</p>
@@ -707,6 +728,39 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 15, fontWeight: 'bold', cursor: 'pointer',
   },
   stealDot: { width: 14, height: 14, borderRadius: '50%', flexShrink: 0 },
+  winOverlay: {
+    position: 'absolute',
+    inset: 0,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'rgba(0,0,0,0.72)',
+    zIndex: 120,
+    padding: 20,
+  },
+  winCard: {
+    background: '#16213e',
+    border: '1px solid rgba(255,213,79,0.35)',
+    borderRadius: 16,
+    padding: '32px 28px',
+    textAlign: 'center',
+    width: '100%',
+    maxWidth: 320,
+  },
+  winEmoji: { fontSize: 56, marginBottom: 8 },
+  winTitle: { fontSize: 26, color: '#ffd700', margin: '0 0 8px' },
+  winSub: { fontSize: 14, color: '#c4b49a', margin: '0 0 20px', lineHeight: 1.4 },
+  winBtn: {
+    padding: '14px 24px',
+    border: 'none',
+    borderRadius: 10,
+    background: 'linear-gradient(135deg, #e94560, #c23152)',
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+    cursor: 'pointer',
+    width: '100%',
+  },
   tabBar: {
     display: 'flex',
     background: 'linear-gradient(180deg, #2a1810, #1a1008)',

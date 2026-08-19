@@ -793,6 +793,7 @@ io.on('connection', (socket) => {
     if (!room?.gameState) return;
 
     const gs = room.gameState;
+    if (gs.winner) return;
     const conn = room.players.find(p => p.socketId === socket.id);
     if (!conn) return;
 
@@ -1105,7 +1106,7 @@ function autoDiscardAIs(gs: NonNullable<Room['gameState']>) {
 
 function scheduleAITurn(room: Room, delayMs = 600) {
   setTimeout(() => {
-    if (!room.gameState) return;
+    if (!room.gameState || room.gameState.winner) return;
     const current = getCurrentPlayer(room.gameState);
     if (current?.isAI) runAITurn(room);
   }, delayMs);
@@ -1154,7 +1155,7 @@ function scheduleAITradeResponses(room: Room) {
 
 // ── AI Turn Runner ──
 function runAITurn(room: Room) {
-  if (!room.gameState) return;
+  if (!room.gameState || room.gameState.winner) return;
   const gs = room.gameState;
   const prev = snapshotTurn(room);
   const current = getCurrentPlayer(gs);
