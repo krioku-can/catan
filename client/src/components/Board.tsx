@@ -1610,15 +1610,30 @@ export default function Board({
       drawWaterHex(ctx, x + W / 2, y + H / 2, hexSize);
     });
 
+    const [robQ, robR] = (gameState.robberHex || '').split(',').map(Number);
+
     // Land hexes — painted assets (procedural fallback until loaded)
     gameState.board.forEach(tile => {
       const { x, y } = hexToPixel(tile.q, tile.r, hexSize);
+      const isRobber = tile.q === robQ && tile.r === robR;
       drawTerrainHex(
         ctx, x + W / 2, y + H / 2, hexSize,
         tile.type,
-        !!tile.hasRobber,
+        isRobber,
         imagesRef.current[tile.type] || null,
       );
+      if (robberMode && !isRobber && tile.type !== 'water') {
+        const pts = hexCorners(x + W / 2, y + H / 2, hexSize * 0.96);
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < 6; i++) ctx.lineTo(pts[i].x, pts[i].y);
+        ctx.closePath();
+        ctx.strokeStyle = 'rgba(255, 213, 79, 0.55)';
+        ctx.lineWidth = 2.4;
+        ctx.stroke();
+        ctx.restore();
+      }
     });
 
     // Harbors
@@ -1688,15 +1703,18 @@ export default function Board({
       }
     });
 
-    // Numbers + robber (on top)
+    // Numbers + robber (on top). Number stays visible so you can see
+    // which roll is blocked; robber sits slightly south of the token.
     gameState.board.forEach(tile => {
       const { x, y } = hexToPixel(tile.q, tile.r, hexSize);
       const cx = x + W / 2;
       const cy = y + H / 2;
-      if (tile.hasRobber) {
-        drawRobber(ctx, cx, cy, hexSize, robberRef.current);
-      } else if (tile.number) {
+      const isRobber = tile.q === robQ && tile.r === robR;
+      if (tile.number) {
         drawNumberToken(ctx, cx, cy + hexSize * 0.02, hexSize, tile.number);
+      }
+      if (isRobber) {
+        drawRobber(ctx, cx, cy + hexSize * 0.28, hexSize, robberRef.current);
       }
     });
 
@@ -1766,7 +1784,7 @@ export default function Board({
     // End board translate — tray sits on wood to the left of the island
     ctx.restore();
     drawPieceTray(ctx, gameState.players, hexSize, H);
-  }, [gameState, hexSize, CANVAS_W, CANVAS_H, BOARD_OX, selectedAction, assetsReady, debug]);
+  }, [gameState, hexSize, CANVAS_W, CANVAS_H, BOARD_OX, selectedAction, assetsReady, debug, robberMode]);
 
   const screenToCanvas = useCallback((screenX: number, screenY: number) => {
     const container = containerRef.current;
@@ -1788,8 +1806,19 @@ export default function Board({
     const H = CANVAS_H;
     // Board content is drawn translated by BOARD_OX
     const bx = x - BOARD_OX;
-    const clickThreshold = 14 / zoom;
+    const clickThreshold = (gameState.setupPhase ? 22 : 16) / zoom;
     const positions = posCache.current;
+
+    // Robber placement: hex wins over corners/edges so a tap on a tile
+    // doesn't get eaten by a nearby settlement vertex.
+    if (robberMode) {
+      const hex = pixelToHex(bx - W / 2, y - H / 2, hexSize);
+      const tile = gameState.board.find(t => t.q === hex.q && t.r === hex.r);
+      if (tile && tile.type !== 'water') {
+        onHexClick(hex.q, hex.r);
+        return;
+      }
+    }
 
     for (const inter of Object.values(gameState.intersections)) {
       const pos = positions.get(inter.key);
@@ -1815,7 +1844,7 @@ export default function Board({
     }
     const hex = pixelToHex(bx - W / 2, y - H / 2, hexSize);
     if (gameState.board.find(t => t.q === hex.q && t.r === hex.r)) onHexClick(hex.q, hex.r);
-  }, [gameState, hexSize, CANVAS_W, CANVAS_H, BOARD_OX, screenToCanvas, onIntersectionClick, onEdgeClick, onHexClick, zoom]);
+  }, [gameState, hexSize, CANVAS_W, CANVAS_H, BOARD_OX, screenToCanvas, onIntersectionClick, onEdgeClick, onHexClick, zoom, robberMode]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     dragStart.current = { x: e.clientX, y: e.clientY };

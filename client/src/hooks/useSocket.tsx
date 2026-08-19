@@ -2,10 +2,19 @@ import { createContext, useContext, useEffect, useState, useCallback, useRef, ty
 import { io, Socket } from 'socket.io-client';
 import type { GameState, PlayerColor } from '../game/types';
 import { enableTurnPush, pushPrefOn } from '../push';
-import { SERVER_URL } from '../serverUrl';
+import { getServerUrl } from '../serverUrl';
+import { getStored, setStored, removeStored } from '../storage';
+
 const SESSION_KEY = 'catan_online_session';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'waking';
+
+export interface TurnTimerState {
+  enabled: boolean;
+  deadline: number | null;
+  paused: boolean;
+  pausedRemainingMs: number | null;
+}
 
 interface RoomPlayer {
   playerId: string;
@@ -25,6 +34,7 @@ interface RoomInfo {
     victoryPointsToWin: 10 | 12;
     friendlyRobber: boolean;
     boardMode: 'random' | 'balanced';
+    turnTimer?: boolean;
   };
 }
 
@@ -38,6 +48,8 @@ interface SocketContextType {
   gameState: GameState | null;
   chatMessages: ChatMessage[];
   lastActionResult: { action: string; result: any } | null;
+  lastError: string;
+  turnTimer: TurnTimerState | null;
   createRoom: (name: string) => void;
   joinRoom: (roomCode: string, name: string) => void;
   toggleReady: () => void;
@@ -49,6 +61,7 @@ interface SocketContextType {
   sendChat: (text: string) => void;
   leaveRoom: () => void;
   retryConnect: () => void;
+  clearError: () => void;
 }
 
 export interface ChatMessage {
@@ -57,7 +70,7 @@ export interface ChatMessage {
   text: string;
 }
 
-interface SavedSession {
+export interface SavedSession {
   roomCode: string;
   playerId: string;
   name: string;
@@ -65,25 +78,50 @@ interface SavedSession {
 
 const SocketContext = createContext<SocketContextType>(null!);
 
-function loadSession(): SavedSession | null {
+export function loadSession(): SavedSession | null {
   try {
-    const raw = sessionStorage.getItem(SESSION_KEY);
+    const raw = getStored(SESSION_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as SavedSession;
+    const parsed = JSON.parse(raw) as SavedSession;
+    if (!parsed?.roomCode || !parsed?.playerId) return null;
+    return parsed;
   } catch {
     return null;
   }
 }
 
 function saveSession(s: SavedSession | null) {
+  if (!s) removeStored(SESSION_KEY);
+  else setStored(SESSION_KEY, JSON.stringify(s));
+}
+
+function stripRoomFromUrl() {
+  if (typeof window === 'undefined') return;
   try {
-    if (!s) sessionStorage.removeItem(SESSION_KEY);
-    else sessionStorage.setItem(SESSION_KEY, JSON.stringify(s));
-  } catch { /* ignore */ }
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has('room')) return;
+    url.searchParams.delete('room');
+    const q = url.searchParams.toString();
+    window.history.replaceState({}, '', url.pathname + (q ? `?${q}` : ''));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function writeRoomToUrl(code: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('room') === code) return;
+    url.searchParams.set('room', code);
+    window.history.replaceState({}, '', `${url.pathname}?${url.searchParams.toString()}`);
+  } catch {
+    /* ignore */
+  }
 }
 
 async function wakeServer(): Promise<boolean> {
-  const base = SERVER_URL.replace(/\/$/, '');
+  const base = getServerUrl().replace(/\/$/, '');
   const urls = [`${base}/api/health`, `${base}/`];
   for (const url of urls) {
     try {
@@ -103,31 +141,38 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [connected, setConnected] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('waking');
-  const [connectionMessage, setConnectionMessage] = useState('Waking game server… (free tier can take ~30s)');
+  const [connectionMessage, setConnectionMessage] = useState('Waking the table…');
   const [room, setRoom] = useState<RoomInfo | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [lastActionResult, setLastActionResult] = useState<{ action: string; result: any } | null>(null);
+  const [lastError, setLastError] = useState('');
+  const [turnTimer, setTurnTimer] = useState<TurnTimerState | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const wakeAttempted = useRef(false);
 
   const tryRejoin = useCallback((s: Socket) => {
     const sess = loadSession();
     if (!sess) return;
+    // A fresh invite wins over a parked seat at a different table.
+    if (typeof window !== 'undefined') {
+      const invited = new URLSearchParams(window.location.search).get('room');
+      if (invited && invited.toUpperCase() !== sess.roomCode) return;
+    }
     s.emit('rejoin_room', {
       roomCode: sess.roomCode,
       playerId: sess.playerId,
       name: sess.name,
     }, (res: { ok?: boolean; playerId?: string; error?: string; inGame?: boolean }) => {
       if (res?.error || !res?.ok) {
-        // Stale session — clear so lobby is clean
-        if (res?.error && /not found|full|started/i.test(res.error)) {
+        if (res?.error && /not found|full|started|seat/i.test(res.error)) {
           saveSession(null);
         }
         return;
       }
       setPlayerId(res.playerId || sess.playerId);
+      writeRoomToUrl(sess.roomCode);
     });
   }, []);
 
@@ -137,9 +182,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       socketRef.current = null;
     }
     setConnectionStatus('connecting');
-    setConnectionMessage('Connecting…');
+    setConnectionMessage('Connecting to the table…');
 
-    const s = io(SERVER_URL, {
+    const s = io(getServerUrl(), {
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: 12,
@@ -164,7 +209,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     s.on('connect_error', () => {
       setConnected(false);
       setConnectionStatus('disconnected');
-      setConnectionMessage('Can\'t reach server. Free hosts sleep when idle — retrying…');
+      setConnectionMessage('Can\'t reach the table. Retrying…');
     });
 
     s.on('room_update', (data: RoomInfo) => {
@@ -172,16 +217,20 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       const sess = loadSession();
       if (sess && data.id) {
         saveSession({ ...sess, roomCode: data.id });
+        writeRoomToUrl(data.id);
       }
     });
 
-    s.on('game_started', ({ gameState: gs }: { gameState: GameState }) => {
+    s.on('game_started', ({ gameState: gs, timer }: { gameState: GameState; timer?: TurnTimerState }) => {
       setGameState(gs);
+      if (timer) setTurnTimer(timer);
     });
 
-    s.on('game_update', ({ gameState: gs, action, result }: { gameState: GameState; action?: string; result?: any }) => {
+    s.on('game_update', ({ gameState: gs, action, result, timer }: { gameState: GameState; action?: string; result?: any; timer?: TurnTimerState }) => {
       setGameState({ ...gs });
-      if (action !== undefined) setLastActionResult({ action, result });
+      if (action !== undefined && action !== 'timer_sync') setLastActionResult({ action, result });
+      if (timer) setTurnTimer(timer);
+      if (action === 'timer_sync' && result) setTurnTimer(result as TurnTimerState);
     });
 
     s.on('chat_message', (msg: ChatMessage) => {
@@ -218,7 +267,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       if (!wakeAttempted.current) {
         wakeAttempted.current = true;
         setConnectionStatus('waking');
-        setConnectionMessage('Waking game server… (free tier can take ~30s on first open)');
+        setConnectionMessage('Waking the table… first open after idle can take a moment');
         await wakeServer();
       }
       if (!cancelled) attachSocket();
@@ -232,25 +281,36 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
   const retryConnect = useCallback(() => {
     setConnectionStatus('waking');
-    setConnectionMessage('Waking game server…');
+    setConnectionMessage('Waking the table…');
     wakeServer().finally(() => attachSocket());
   }, [attachSocket]);
 
   const createRoom = useCallback((name: string) => {
+    setLastError('');
     socket?.emit('create_room', { name }, (res: { roomCode: string; playerId: string }) => {
+      if (!res?.roomCode) {
+        setLastError('Could not create a table. Try again.');
+        return;
+      }
       setPlayerId(res.playerId);
       saveSession({ roomCode: res.roomCode, playerId: res.playerId, name });
+      writeRoomToUrl(res.roomCode);
     });
   }, [socket]);
 
   const joinRoom = useCallback((roomCode: string, name: string) => {
-    socket?.emit('join_room', { roomCode, name }, (res: { playerId?: string; color?: PlayerColor; error?: string }) => {
+    setLastError('');
+    const code = roomCode.trim().toUpperCase();
+    const sess = loadSession();
+    const prevId = sess && sess.roomCode === code ? sess.playerId : undefined;
+    socket?.emit('join_room', { roomCode: code, name, playerId: prevId }, (res: { playerId?: string; color?: PlayerColor; error?: string }) => {
       if (res.error) {
-        alert(res.error);
+        setLastError(res.error);
         return;
       }
       setPlayerId(res.playerId!);
-      saveSession({ roomCode: roomCode.toUpperCase(), playerId: res.playerId!, name });
+      saveSession({ roomCode: code, playerId: res.playerId!, name });
+      writeRoomToUrl(code);
     });
   }, [socket]);
 
@@ -270,7 +330,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     socket?.emit('start_game');
   }, [socket]);
 
-  const updateSettings = useCallback((partial: { victoryPointsToWin?: 10 | 12; friendlyRobber?: boolean; boardMode?: 'random' | 'balanced' }) => {
+  const updateSettings = useCallback((partial: { victoryPointsToWin?: 10 | 12; friendlyRobber?: boolean; boardMode?: 'random' | 'balanced'; turnTimer?: boolean }) => {
     socket?.emit('update_settings', partial);
   }, [socket]);
 
@@ -287,16 +347,21 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     setGameState(null);
     setPlayerId(null);
     setChatMessages([]);
+    setLastError('');
+    setTurnTimer(null);
     saveSession(null);
+    stripRoomFromUrl();
     socket?.emit('leave_room');
   }, [socket]);
+
+  const clearError = useCallback(() => setLastError(''), []);
 
   return (
     <SocketContext.Provider value={{
       socket, connected, connectionStatus, connectionMessage,
-      room, playerId, gameState, chatMessages, lastActionResult,
+      room, playerId, gameState, chatMessages, lastActionResult, lastError, turnTimer,
       createRoom, joinRoom, toggleReady, addAI, removeAI, startGame, updateSettings,
-      sendAction, sendChat, leaveRoom, retryConnect,
+      sendAction, sendChat, leaveRoom, retryConnect, clearError,
     }}>
       {children}
     </SocketContext.Provider>
@@ -305,21 +370,4 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
 export function useSocket() {
   return useContext(SocketContext);
-}
-
-// Public room list for the join browser. Returns [] on any failure so the UI
-// degrades to manual code entry.
-export async function fetchRooms(): Promise<{ id: string; players: { name: string }[]; inGame: boolean }[]> {
-  const base = SERVER_URL.replace(/\/$/, '');
-  try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 8000);
-    const res = await fetch(`${base}/api/rooms`, { signal: ctrl.signal });
-    clearTimeout(t);
-    if (!res.ok) return [];
-    const data = await res.json();
-    return Array.isArray(data) ? data : [];
-  } catch {
-    return [];
-  }
 }

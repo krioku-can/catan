@@ -21,10 +21,10 @@ export function getTurnCoach(
   const who = isMe ? 'Your turn' : `${current.name}'s turn`;
 
   if (opts?.pendingSteal && isMe) {
-    return '🦹 Choose a player to steal from';
+    return 'Steal 1 random resource — pick a player on that hex';
   }
   if (opts?.robberMode && isMe) {
-    return '🦹 Tap a hex to move the robber (not the current hex)';
+    return 'Move the robber onto a hex, then steal from someone there';
   }
 
   if (gs.phase === 'discard') {
@@ -42,15 +42,15 @@ export function getTurnCoach(
       : '⏳ Resolving discards…';
   }
 
+  if (gs.phase === 'turn_order') {
+    return isMe ? 'Roll to decide who goes first' : `Waiting for ${current.name} to roll who goes first`;
+  }
+
   if (gs.setupPhase) {
     if (!isMe) return `⏳ ${current.name} is placing (${gs.phase === 'setup_road' ? 'road' : 'settlement'})`;
     if (gs.phase === 'setup_settlement') return '🏠 Tap a corner to place a settlement';
     if (gs.phase === 'setup_road') return '🛣️ Tap an edge next to your settlement for a road';
     return 'Setup phase';
-  }
-
-  if (gs.phase === 'turn_order') {
-    return isMe ? '🎲 Roll to decide who goes first' : `⏳ ${current.name} is rolling turn order`;
   }
 
   if (gs.pendingDevAction === 'road_building' && (gs.pendingDevRoads || 0) > 0 && isMe) {

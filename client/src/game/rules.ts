@@ -491,6 +491,10 @@ export function moveRobber(state: GameState, targetHexQ: number, targetHexR: num
   state.robberHex = `${targetHexQ},${targetHexR}`;
   state.robberMovedThisTurn = true;
   state.pendingRobberMove = false;
+  // One source of truth — never leave a stray hasRobber flag on another tile.
+  for (const t of state.board) {
+    t.hasRobber = t.q === targetHexQ && t.r === targetHexR;
+  }
 
   // Steal a random resource from a player with settlements on this hex
   if (stealFrom) {
@@ -509,6 +513,55 @@ export function moveRobber(state: GameState, targetHexQ: number, targetHexR: num
   }
 
   return null;
+}
+
+/** Pip value for robber targeting: 6/8 are the tiles you actually want to shut down. */
+function robberPipWeight(n: number | undefined): number {
+  if (!n) return 0;
+  if (n === 6 || n === 8) return 5;
+  if (n === 5 || n === 9) return 4;
+  if (n === 4 || n === 10) return 3;
+  if (n === 3 || n === 11) return 2;
+  return 1;
+}
+
+/** Best hex to drop the robber on: high-pip enemy tiles, prefer the leader, avoid blocking yourself. */
+export function pickRobberHex(state: GameState, mover: PlayerColor): { q: number; r: number } | null {
+  const [rq, rr] = (state.robberHex || '0,0').split(',').map(Number);
+  const leader = [...state.players].sort((a, b) => (b.victoryPoints || 0) - (a.victoryPoints || 0))[0];
+  const candidates: { q: number; r: number; score: number }[] = [];
+  for (const tile of state.board) {
+    if (tile.type === 'water') continue;
+    if (tile.q === rq && tile.r === rr) continue;
+    const corners = getHexCorners(tile.q, tile.r);
+    let enemy = 0;
+    let self = 0;
+    let hitsLeader = false;
+    for (const cKey of corners) {
+      const inter = state.intersections[cKey];
+      if (!inter?.owner) continue;
+      const w = inter.building === 'city' ? 2 : 1;
+      if (inter.owner === mover) self += w;
+      else {
+        enemy += w;
+        if (leader && inter.owner === leader.color && leader.color !== mover) hitsLeader = true;
+      }
+    }
+    if (enemy === 0) continue;
+    const pips = robberPipWeight(tile.number);
+    let score = enemy * pips * 10 + pips;
+    if (hitsLeader) score += 8;
+    score -= self * pips * 12;
+    if (score > 0) candidates.push({ q: tile.q, r: tile.r, score });
+  }
+  if (candidates.length === 0) {
+    const desert = state.board.find(t => t.type === 'desert' && !(t.q === rq && t.r === rr));
+    if (desert) return { q: desert.q, r: desert.r };
+    const any = state.board.find(t => t.type !== 'water' && !(t.q === rq && t.r === rr));
+    return any ? { q: any.q, r: any.r } : null;
+  }
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0];
 }
 
 // Get players who have a settlement/city on a given hex AND have resources to
@@ -535,7 +588,11 @@ export function getStealTargets(
 }
 
 // Steal a random resource from a target player (robber already moved).
-export function stealFrom(state: GameState, target: PlayerColor): string | null {
+export function stealFrom(
+  state: GameState,
+  target: PlayerColor,
+  out?: { resource?: ResourceType },
+): string | null {
   const t = getPlayerByColor(state, target);
   if (!t) return 'Invalid target';
   if (state.friendlyRobber && (t.victoryPoints || 0) <= 2) {
@@ -547,7 +604,20 @@ export function stealFrom(state: GameState, target: PlayerColor): string | null 
   const stolen = available[Math.floor(Math.random() * available.length)];
   t.resources[stolen]--;
   getCurrentPlayer(state).resources[stolen]++;
+  if (out) out.resource = stolen;
   return null;
+}
+
+export function checkVictory(state: GameState): void {
+  if (state.setupPhase || state.winner) return;
+  const p = getCurrentPlayer(state);
+  if ((p.victoryPoints || 0) >= (state.victoryPointsToWin || 10)) {
+    state.winner = p.color;
+  }
+}
+
+export function hiddenVictoryPoints(player: Player): number {
+  return (player.devCards || []).filter(c => c.type === 'victory_point' && !c.played).length;
 }
 
 // Place a road (during normal play)
@@ -1077,34 +1147,22 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
   if (state.phase === 'trade') {
     // ONLY move the robber after a 7 or a Knight — never on ordinary production rolls.
     if (state.pendingRobberMove && !state.robberMovedThisTurn) {
-      // Pick a hex with enemy settlements/cities (prefer one with the most
-      // enemy pieces, and avoid the current robber hex).
-      const [rq, rr] = state.robberHex.split(',').map(Number);
-      const candidates: { q: number; r: number; score: number }[] = [];
-      state.board.forEach(tile => {
-        if (tile.type === 'water' || tile.type === 'desert') return;
-        if (tile.q === rq && tile.r === rr) return;
-        const corners = getHexCorners(tile.q, tile.r);
-        let score = 0;
-        corners.forEach(cKey => {
-          const inter = state.intersections[cKey];
-          if (inter?.owner && inter.owner !== player.color) score++;
-        });
-        if (score > 0) candidates.push({ q: tile.q, r: tile.r, score });
-      });
-      if (candidates.length > 0) {
-        candidates.sort((a, b) => b.score - a.score);
-        const best = candidates[0];
-        // Move the robber, then steal from a random enemy on that hex.
+      const best = pickRobberHex(state, player.color);
+      if (best) {
         moveRobber(state, best.q, best.r);
         const targets = getStealTargets(state, best.q, best.r);
+        let stoleFrom: PlayerColor | undefined;
+        let stolen: ResourceType | undefined;
         if (targets.length > 0) {
           const target = targets[Math.floor(Math.random() * targets.length)];
-          stealFrom(state, target);
+          const out: { resource?: ResourceType } = {};
+          if (!stealFrom(state, target, out)) {
+            stoleFrom = target;
+            stolen = out.resource;
+          }
         }
-        return { action: 'move_robber', data: { q: best.q, r: best.r } };
+        return { action: 'move_robber', data: { q: best.q, r: best.r, stoleFrom, resource: stolen } };
       }
-      // No valid target hex — clear pending so we don't loop forever.
       state.robberMovedThisTurn = true;
       state.pendingRobberMove = false;
     }

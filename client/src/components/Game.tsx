@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { GameState, GameConfig, PlayerColor, ResourceType } from '../game/types';
 import { createInitialState, getCurrentPlayer, getPlayerByColor, executeBankTrade, proposePublicTrade, respondToTrade, completeTradeWith, cancelTradeOffer, aiRespondToPublicOffers, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, countHeldDevCards, getStealTargets, stealFrom } from '../game/rules';
-import { getHexCorners } from '../game/board';
 import Board from './Board';
 import PlayerHand from './PlayerHand';
 import DiceRoller from './DiceRoller';
@@ -94,6 +93,19 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     if (gameState?.winner) sfx.win();
   }, [gameState?.winner]);
 
+  useEffect(() => {
+    if (!gameState) {
+      setRobberMode(false);
+      return;
+    }
+    const cur = getCurrentPlayer(gameState);
+    const mustMove = !!gameState.pendingRobberMove
+      && !gameState.robberMovedThisTurn
+      && !cur.isAI
+      && gameState.phase !== 'discard';
+    setRobberMode(mustMove);
+  }, [gameState?.pendingRobberMove, gameState?.robberMovedThisTurn, gameState?.phase, gameState?.currentTurn]);
+
   // Auto-save the game to localStorage on every state change so a refresh
   // or accidental close never loses progress. Cleared when the game ends.
   useEffect(() => {
@@ -127,7 +139,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
       playerNames: [playerName, 'AI Blue', 'AI White', 'AI Orange'],
       aiPlayers: [1, 2, 3],
       victoryPointsToWin: 10,
-      friendlyRobber: true,
+      friendlyRobber: false,
       boardMode: 'balanced',
     });
   }, [quickStart, playerName, startGame]);
@@ -461,21 +473,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           }
           discardResources(gameState, ai.color, toDiscard);
         }
-        setRobberMode(true);
-        const [rq, rr] = gameState.robberHex.split(',').map(Number);
-        const targets: PlayerColor[] = [];
-        const corners = getHexCorners(rq, rr);
-        corners.forEach(cKey => {
-          const inter = gameState.intersections[cKey];
-          if (inter?.owner && inter.owner !== getCurrentPlayer(gameState).color) {
-            const p = gameState.players.find(p => p.color === inter.owner);
-            if (p) {
-              const hasRes = ['brick', 'lumber', 'wool', 'grain', 'ore'].some(r => (p.resources[r as ResourceType] || 0) > 0);
-              if (hasRes) targets.push(inter.owner);
-            }
-          }
-        });
-        setStealTargets(targets);
+        // Steal targets are chosen AFTER the robber moves to a new hex.
       }
       
       setDiceRolling(false);
@@ -561,9 +559,10 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
 
   const handleSteal = useCallback((target: PlayerColor) => {
     if (!gameState || !pendingSteal) return;
-    const err = stealFrom(gameState, target);
+    const stolen: { resource?: ResourceType } = {};
+    const err = stealFrom(gameState, target, stolen);
     if (err === null) {
-      addLog(`Robber stole from ${getPlayerByColor(gameState, target)?.name}`);
+      addLog(`Robber stole ${stolen.resource || 'a card'} from ${getPlayerByColor(gameState, target)?.name}`);
     }
     setPendingSteal(null);
     setStealTargets([]);
@@ -974,7 +973,7 @@ function SetupScreen({
   const [names, setNames] = useState([defaultName, '', '', '']);
   const [aiPlayers, setAiPlayers] = useState<number[]>([1, 2, 3]);
   const [victoryPointsToWin, setVictoryPointsToWin] = useState<10 | 12>(10);
-  const [friendlyRobber, setFriendlyRobber] = useState(true);
+  const [friendlyRobber, setFriendlyRobber] = useState(false);
   const [boardMode, setBoardMode] = useState<'random' | 'balanced'>('balanced');
   const [aiLevel, setAiLevel] = useState<'easy' | 'normal' | 'hard'>('normal');
 

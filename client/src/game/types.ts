@@ -144,6 +144,8 @@ export interface GameConfig {
   friendlyRobber?: boolean;
   /** random = shuffle; balanced = avoid clustered high-pips + resource clumps. */
   boardMode?: 'random' | 'balanced';
+  /** 70s turn clock with +30s after a 7. */
+  turnTimer?: boolean;
   /** Difficulty for all AI players. Defaults to 'normal'. */
   aiLevel?: AiLevel;
 }

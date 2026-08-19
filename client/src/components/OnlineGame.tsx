@@ -15,13 +15,14 @@ import DevCardPanel from './DevCardPanel';
 import TradeOffers from './TradeOffers';
 import TurnCoach from './TurnCoach';
 import PushToggle from './PushToggle';
+import TurnTimer from './TurnTimer';
 import { unlockAudio, sfx, isMuted, setMuted } from '../audio';
 import { getTurnCoach } from '../turnCoach';
 
 const HEX_SIZE = 68;
 
-export default function OnlineGame() {
-  const { gameState, playerId, room, sendAction, sendChat, chatMessages, leaveRoom, lastActionResult } = useSocket();
+export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void }) {
+  const { gameState, playerId, room, sendAction, sendChat, chatMessages, leaveRoom, lastActionResult, turnTimer } = useSocket();
   const [selectedAction, setSelectedAction] = useState<string | null>(null);
   const [robberMode, setRobberMode] = useState(false);
   const [stealTargets, setStealTargets] = useState<PlayerColor[]>([]);
@@ -31,6 +32,8 @@ export default function OnlineGame() {
   const [diceFlash, setDiceFlash] = useState<{ total: number; faces: [number, number] } | null>(null);
   const [debug, setDebug] = useState(() => new URLSearchParams(window.location.search).get('debug') === '1');
   const [muted, setMutedState] = useState(() => isMuted());
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const [orderFlash, setOrderFlash] = useState<{ order: PlayerColor[]; rolls: Record<string, number> } | null>(null);
   const lastTurnColorRef = useRef<string | null>(null);
   const lastDiceKeyRef = useRef<string>('');
 
@@ -40,7 +43,6 @@ export default function OnlineGame() {
     return () => window.removeEventListener('pointerdown', unlock);
   }, []);
 
-  // Flash the rolled number whenever the server syncs a new dice result.
   useEffect(() => {
     if (gameState?.dice) {
       const key = `${gameState.dice[0]}-${gameState.dice[1]}-${gameState.currentTurn}-${gameState.round}`;
@@ -66,31 +68,63 @@ export default function OnlineGame() {
     if (gameState?.winner) sfx.win();
   }, [gameState?.winner]);
 
-  // When the server confirms a robber move, surface the steal-target picker.
+  // Only the current player may move the robber, and only while the server
+  // says a 7/knight is still waiting. Never arm this for the whole table.
   useEffect(() => {
-    if (lastActionResult?.action === 'move_robber' && lastActionResult.result?.stealTargets?.length) {
-      sfx.robber();
-      setStealTargets(lastActionResult.result.stealTargets);
-      setPendingSteal({ q: 0, r: 0 }); // robber already moved; steal uses current robberHex
+    if (!gameState) {
+      setRobberMode(false);
+      return;
     }
-    // After a 7 is rolled, server signals robberMode=true. Surface the
-    // robber-move picker so the human can move the robber (per official
-    // rules, BEFORE steal targets are computed from the new hex).
-    if (lastActionResult?.action === 'roll_dice' && lastActionResult.result?.robberMode) {
-      setRobberMode(true);
-      setStealTargets([]); // empty until move_robber resolves
+    const myColor = room?.players.find(rp => rp.playerId === playerId)?.color;
+    const current = getCurrentPlayer(gameState);
+    const mine = !!myColor && current.color === myColor;
+    const mustMove = !!gameState.pendingRobberMove
+      && !gameState.robberMovedThisTurn
+      && mine
+      && gameState.phase !== 'discard';
+    setRobberMode(mustMove);
+  }, [gameState?.pendingRobberMove, gameState?.robberMovedThisTurn, gameState?.phase, gameState?.currentTurn, room, playerId]);
+
+  useEffect(() => {
+    if (lastActionResult?.action === 'move_robber') {
+      sfx.robber();
+      const targets = (lastActionResult.result?.stealTargets || []) as PlayerColor[];
+      const alreadyStole = !!lastActionResult.result?.alreadyStole;
+      if (targets.length > 0 && !alreadyStole) {
+        setStealTargets(targets);
+        setPendingSteal({ q: 0, r: 0 });
+      } else {
+        setStealTargets([]);
+        setPendingSteal(null);
+      }
+    }
+    if (lastActionResult?.action === 'steal') {
+      sfx.steal();
+      setStealTargets([]);
       setPendingSteal(null);
     }
-    if (lastActionResult?.action === 'steal') sfx.steal();
     if (lastActionResult?.action === 'discard') sfx.discard();
     if (lastActionResult?.action === 'place_settlement' || lastActionResult?.action === 'place_city') sfx.build();
     if (lastActionResult?.action === 'place_road') sfx.road();
   }, [lastActionResult]);
 
+  useEffect(() => {
+    if (lastActionResult?.action !== 'roll_turn_order') return;
+    const rolls = lastActionResult.result?.rolls as Record<string, number> | undefined;
+    const order = lastActionResult.result?.order as PlayerColor[] | undefined;
+    if (!rolls || !order?.length) return;
+    setOrderFlash({ order, rolls });
+  }, [lastActionResult]);
+
+  useEffect(() => {
+    if (!orderFlash) return;
+    const t = window.setTimeout(() => setOrderFlash(null), 1400);
+    return () => window.clearTimeout(t);
+  }, [orderFlash]);
+
   const handleHexClick = useCallback((q: number, r: number) => {
     if (!robberMode) return;
     sendAction('move_robber', { q, r });
-    setRobberMode(false);
   }, [robberMode, sendAction]);
 
   const handleSteal = useCallback((target: PlayerColor) => {
@@ -102,6 +136,11 @@ export default function OnlineGame() {
   }, [gameState, sendAction]);
 
   const handleIntersectionClick = useCallback((key: string) => {
+    setOrderFlash(null);
+    if (gameState?.setupPhase && gameState.phase === 'setup_settlement') {
+      sendAction('place_settlement', { key });
+      return;
+    }
     if (selectedAction === 'settlement') {
       sendAction('place_settlement', { key });
       setSelectedAction(null);
@@ -109,13 +148,15 @@ export default function OnlineGame() {
       sendAction('place_city', { key });
       setSelectedAction(null);
     }
-  }, [selectedAction, sendAction]);
+  }, [selectedAction, sendAction, gameState]);
 
   const handleEdgeClick = useCallback((key: string) => {
+    setOrderFlash(null);
+    const setupRoad = !!gameState?.setupPhase && gameState.phase === 'setup_road';
     const freeRoads = gameState?.pendingDevAction === 'road_building' && (gameState?.pendingDevRoads || 0) > 0;
-    if (freeRoads || selectedAction === 'road') {
+    if (setupRoad || freeRoads || selectedAction === 'road') {
       sendAction('place_road', { key });
-      if (!freeRoads) setSelectedAction(null);
+      if (!freeRoads && !setupRoad) setSelectedAction(null);
     }
   }, [selectedAction, sendAction, gameState]);
 
@@ -141,7 +182,6 @@ export default function OnlineGame() {
 
   const handlePlayKnight = useCallback(() => {
     sendAction('play_knight');
-    setRobberMode(true);
   }, [sendAction]);
 
   const handleBankTrade = useCallback((give: Partial<Record<ResourceType, number>>, want: Partial<Record<ResourceType, number>>) => {
@@ -203,32 +243,74 @@ export default function OnlineGame() {
   });
   const player = getCurrentPlayer(gameState);
   const isMyTurn = myPlayer?.color === player.color;
+  const awayColors = room.players
+    .filter(p => !p.isAI && p.connected === false)
+    .map(p => p.color);
+  const currentAway = awayColors.includes(player.color);
+  const coachText = currentAway && !isMyTurn
+    ? `${player.name} is away — waiting for them to come back`
+    : getTurnCoach(gameState, myPlayer, {
+        robberMode,
+        pendingSteal: !!(pendingSteal && stealTargets.length > 0),
+        selectedAction,
+      });
+
+  const leaveModal = confirmLeave ? (
+    <div style={styles.modalScrim} onClick={() => setConfirmLeave(false)}>
+      <div style={styles.modal} onClick={e => e.stopPropagation()}>
+        <h3 style={styles.modalTitle}>Leave the table?</h3>
+        <p style={styles.modalBody}>
+          This gives up your seat. Closing the tab is fine — you can come back with the invite.
+        </p>
+        <button type="button" style={styles.stayBtn} onClick={() => setConfirmLeave(false)}>
+          Stay
+        </button>
+        <button
+          type="button"
+          style={styles.leaveConfirmBtn}
+          onClick={() => { setConfirmLeave(false); leaveRoom(); onLeaveTable?.(); }}
+        >
+          Leave table
+        </button>
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div style={styles.container}>
-      {/* Turn-order roll screen (before setup) */}
+      {leaveModal}
       {gameState.phase === 'turn_order' && (
         <div style={styles.turnOrderScreen}>
-          <h2 style={styles.turnOrderTitle}>🎲 Roll for Turn Order</h2>
-          <p style={styles.turnOrderSub}>
-            Each player rolls 2 dice. Highest roll places first.
-          </p>
-          <button
-            type="button"
-            style={styles.turnOrderBtn}
-            onClick={handleTurnOrder}
-          >
-            🎲 Roll
-          </button>
+          <p style={styles.turnOrderKicker}>Family table {room.id}</p>
+          <h2 style={styles.turnOrderTitle}>Who goes first?</h2>
+          <div style={styles.turnOrderSeats}>
+            {gameState.players.map(p => (
+              <div key={p.color} style={styles.turnOrderSeat}>
+                <span style={{ ...styles.stealDot, backgroundColor: p.color }} />
+                {p.name}
+              </div>
+            ))}
+          </div>
+          {isMyTurn ? (
+            <>
+              <p style={styles.turnOrderSub}>Roll to lock seating order. Highest goes first.</p>
+              <button type="button" style={styles.turnOrderBtn} onClick={handleTurnOrder}>
+                Roll for everyone
+              </button>
+            </>
+          ) : (
+            <p style={styles.turnOrderSub}>Waiting for {player.name} to roll…</p>
+          )}
         </div>
       )}
 
-      {/* Top score bar — Catan Universe style */}
       <div style={styles.topBar}>
         <ScoreBar
           gameState={gameState}
           myColor={myPlayer?.color}
           currentColor={player.color}
           dice={gameState.dice}
+          awayColors={awayColors}
           rightActions={(
             <>
               <button
@@ -248,22 +330,26 @@ export default function OnlineGame() {
                 title="Toggle debug board overlay"
                 type="button"
               >🔍</button>
-              <button className="score-icon-btn score-icon-btn-danger" onClick={leaveRoom} type="button">✕</button>
+              <button className="score-icon-btn score-icon-btn-danger" onClick={() => setConfirmLeave(true)} type="button">✕</button>
             </>
           )}
         />
       </div>
 
       <TurnCoach
-        text={getTurnCoach(gameState, myPlayer, {
-          robberMode,
-          pendingSteal: !!(pendingSteal && stealTargets.length > 0),
-          selectedAction,
-        })}
+        text={coachText}
         highlight={isMyTurn && !gameState.winner}
+        trailing={
+          turnTimer?.enabled ? (
+            <TurnTimer
+              deadline={turnTimer.deadline}
+              paused={turnTimer.paused}
+              pausedRemainingMs={turnTimer.pausedRemainingMs}
+            />
+          ) : null
+        }
       />
 
-      {/* Board — fills remaining space; menus overlay instead of shrinking it */}
       <div className="board-stage" style={styles.boardArea}>
         <Board
           gameState={gameState}
@@ -285,20 +371,36 @@ export default function OnlineGame() {
             <HandBar player={myPlayer} />
           </div>
         )}
+        {orderFlash && (
+          <div style={styles.orderFlash}>
+            <div style={styles.orderFlashTitle}>Turn order</div>
+            <div style={styles.orderFlashList}>
+              {orderFlash.order.map((color, i) => {
+                const p = gameState.players.find(pl => pl.color === color);
+                return (
+                  <div key={color} style={styles.orderFlashRow}>
+                    <span style={styles.orderFlashRank}>{i + 1}</span>
+                    <span style={{ ...styles.stealDot, backgroundColor: color }} />
+                    <span style={styles.orderFlashName}>{p?.name}</span>
+                    <span style={styles.orderFlashRoll}>{orderFlash.rolls[color]}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Setup hint */}
       {gameState.setupPhase && (
         <div style={styles.setupHint}>
           {gameState.phase === 'setup_settlement'
             ? (gameState.setupRound >= gameState.players.length * 2
-                ? '👆 Second settlement — you collect adjacent resources'
-                : '👆 First settlement — no resources yet (official rule)')
-            : '👆 Tap an edge to place a road'}
+                ? 'Second settlement — you collect adjacent resources'
+                : 'First settlement — no resources yet (official rule)')
+            : 'Tap an edge to place a road'}
         </div>
       )}
 
-      {/* Discard modal after a 7 */}
       {gameState.phase === 'discard' && myPlayer && gameState.discardQueue.includes(myPlayer.color) && (
         <DiscardModal
           player={myPlayer}
@@ -310,13 +412,19 @@ export default function OnlineGame() {
         />
       )}
 
-      {/* Steal target picker after moving the robber */}
       {pendingSteal && stealTargets.length > 0 && (
         <div style={styles.stealOverlay}>
           <div style={styles.stealCard}>
-            <div style={styles.stealTitle}>🦹 Choose who to steal from</div>
+            <div style={styles.stealTitle}>Steal 1 resource</div>
+            <div style={styles.stealHint}>
+              Official rule: take one random resource from a player on this hex.
+            </div>
             {stealTargets.map(color => {
-              const p = gameState.players.find(pl => pl.color === color);
+              const p = gameState.players.find(pl => pl.color === color) as
+                | (typeof gameState.players[number] & { _resourceCount?: number })
+                | undefined;
+              const cards = p?._resourceCount
+                ?? ['brick', 'lumber', 'wool', 'grain', 'ore'].reduce((s, r) => s + (p?.resources[r as ResourceType] || 0), 0);
               return (
                 <button
                   key={color}
@@ -324,7 +432,8 @@ export default function OnlineGame() {
                   onClick={() => handleSteal(color)}
                 >
                   <span style={{ ...styles.stealDot, backgroundColor: color }} />
-                  {p?.name}
+                  <span style={{ flex: 1, textAlign: 'left' }}>{p?.name}</span>
+                  <span style={styles.stealCount}>{cards} card{cards === 1 ? '' : 's'}</span>
                 </button>
               );
             })}
@@ -332,7 +441,12 @@ export default function OnlineGame() {
         </div>
       )}
 
-      {/* Incoming domestic trade offers */}
+      {lastActionResult?.action === 'steal' && lastActionResult.result?.resource && (
+        <div style={styles.stealToast}>
+          You stole {lastActionResult.result.resource}!
+        </div>
+      )}
+
       {myPlayer && (
         <TradeOffers
           gameState={gameState}
@@ -343,7 +457,6 @@ export default function OnlineGame() {
         />
       )}
 
-      {/* Bottom chrome: tab bar always visible; sheet overlays board above it */}
       <div className="bottom-chrome">
         {showPanel && (
           <div className="bottom-sheet" style={styles.panelChrome}>
@@ -390,7 +503,7 @@ export default function OnlineGame() {
                     />
                     {gameState.phase === 'trade' && isMyTurn && (
                       <button style={styles.doneTradingBtn} onClick={handleSkipTrade}>
-                        ✅ Done Trading
+                        Done Trading
                       </button>
                     )}
                     <PushToggle playerId={playerId} />
@@ -398,7 +511,7 @@ export default function OnlineGame() {
                 )}
                 {gameState.setupPhase && (
                   <div style={styles.setupMsg}>
-                    Place your settlements and roads to start the game!
+                    {isMyTurn ? 'Place your pieces on the board' : 'Waiting for the table…'}
                   </div>
                 )}
               </div>
@@ -449,19 +562,19 @@ export default function OnlineGame() {
             style={{ ...styles.tab, ...(showPanel === 'actions' ? styles.tabActive : {}) }}
             onClick={() => setShowPanel(showPanel === 'actions' ? null : 'actions')}
           >
-            🎮 Actions
+            Actions
           </button>
           <button
             style={{ ...styles.tab, ...(showPanel === 'hand' ? styles.tabActive : {}) }}
             onClick={() => setShowPanel(showPanel === 'hand' ? null : 'hand')}
           >
-            🃏 Hand
+            Hand
           </button>
           <button
             style={{ ...styles.tab, ...(showPanel === 'chat' ? styles.tabActive : {}) }}
             onClick={() => setShowPanel(showPanel === 'chat' ? null : 'chat')}
           >
-            💬 Chat{chatMessages.length > 0 ? ` (${chatMessages.length})` : ''}
+            Chat{chatMessages.length > 0 ? ` (${chatMessages.length})` : ''}
           </button>
         </div>
       </div>
@@ -486,57 +599,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'transparent',
     zIndex: 10,
   },
-  turnInfo: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-  },
-  turnDot: {
-    width: 10,
-    height: 10,
-    borderRadius: '50%',
-    flexShrink: 0,
-  },
-  turnName: {
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  youTag: {
-    fontSize: 12,
-    color: '#2ecc71',
-  },
-  phaseTag: {
-    fontSize: 11,
-    color: '#8890a0',
-    textTransform: 'uppercase',
-    background: '#1a1a2e',
-    padding: '2px 6px',
-    borderRadius: 4,
-  },
-  topActions: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-  },
-  diceResult: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#ffd700',
-  },
-  leaveBtn: {
-    padding: '4px 10px',
-    border: '1px solid #e74c3c',
-    borderRadius: 6,
-    background: 'transparent',
-    color: '#e74c3c',
-    cursor: 'pointer',
-    fontSize: 16,
-    fontWeight: 'bold',
-    lineHeight: 1,
-  },
-  boardArea: {
-    // layout from .board-stage
-  },
+  boardArea: {},
   setupHint: {
     position: 'absolute',
     bottom: 100,
@@ -549,19 +612,68 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '8px 16px',
     background: 'rgba(0,0,0,0.6)',
     zIndex: 5,
+    pointerEvents: 'none',
   },
   turnOrderScreen: {
     position: 'fixed', inset: 0, zIndex: 60,
     display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
     background: 'rgba(0,0,0,0.85)', gap: 16, padding: 24,
   },
+  turnOrderKicker: {
+    color: '#c4b49a', fontSize: 12, letterSpacing: 1.2, textTransform: 'uppercase', margin: 0,
+  },
+  turnOrderSeats: { display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
+  turnOrderSeat: {
+    display: 'flex', alignItems: 'center', gap: 6,
+    background: 'rgba(255,255,255,0.06)', borderRadius: 8, padding: '6px 10px',
+    color: '#f5efe4', fontWeight: 700, fontSize: 13,
+  },
   turnOrderTitle: { color: '#ffd700', fontSize: 24, fontWeight: 'bold', margin: 0, textAlign: 'center' },
   turnOrderSub: { color: '#c4b49a', fontSize: 14, margin: 0, textAlign: 'center', maxWidth: 300 },
   turnOrderBtn: {
     padding: '14px 28px', border: 'none', borderRadius: 10,
-    background: 'linear-gradient(135deg, #e94560, #c23152)', color: 'white',
+    background: 'linear-gradient(135deg, #c4784a, #8a4b28)', color: 'white',
     fontSize: 16, fontWeight: 'bold', cursor: 'pointer',
   },
+  orderFlash: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 168,
+    background: 'linear-gradient(180deg, rgba(48,28,14,0.92), rgba(28,16,8,0.94))',
+    border: '1px solid rgba(200,150,70,0.35)',
+    borderRadius: 10,
+    padding: '8px 10px',
+    zIndex: 8,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+    pointerEvents: 'none',
+    boxShadow: '0 8px 20px rgba(0,0,0,0.35)',
+  },
+  orderFlashTitle: {
+    color: '#ffd700',
+    fontSize: 10,
+    fontWeight: 700,
+    letterSpacing: 1.1,
+    textTransform: 'uppercase',
+    textAlign: 'center',
+    marginBottom: 2,
+  },
+  orderFlashList: { display: 'flex', flexDirection: 'column', gap: 3 },
+  orderFlashRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    color: '#f5efe4',
+    fontSize: 12,
+    fontWeight: 700,
+  },
+  orderFlashName: {
+    flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
+  orderFlashRank: { width: 14, color: '#c4b49a', fontSize: 11 },
+  orderFlashRoll: { color: '#ffd700', fontVariantNumeric: 'tabular-nums' },
   stealOverlay: {
     position: 'fixed', inset: 0, zIndex: 50,
     display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -572,6 +684,23 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', flexDirection: 'column', gap: 10,
   },
   stealTitle: { color: '#ffd700', fontSize: 15, fontWeight: 'bold', textAlign: 'center', marginBottom: 4 },
+  stealHint: { color: '#c4b49a', fontSize: 12, textAlign: 'center', lineHeight: 1.35, marginBottom: 4 },
+  stealCount: { color: '#c4b49a', fontSize: 12, fontWeight: 700 },
+  stealToast: {
+    position: 'absolute',
+    top: 12,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    zIndex: 40,
+    background: 'rgba(20,12,6,0.92)',
+    border: '1px solid rgba(255,213,79,0.45)',
+    color: '#ffd54f',
+    fontWeight: 800,
+    fontSize: 14,
+    padding: '8px 14px',
+    borderRadius: 10,
+    pointerEvents: 'none',
+  },
   stealBtn: {
     display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px',
     border: '2px solid', borderRadius: 8, background: '#1a1a2e', color: '#e0e0e0',
@@ -601,9 +730,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#ffd700',
     borderBottom: '2px solid #ffd700',
   },
-  panelChrome: {
-    // Visual bits only — sizing/scroll live on .bottom-sheet CSS class
-  },
+  panelChrome: {},
   setupMsg: {
     textAlign: 'center',
     color: '#8890a0',
@@ -617,7 +744,6 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: 8,
   },
   chatMessages: {
-    // Scroll with the whole bottom sheet (no nested maxHeight trap)
     fontSize: 13,
     display: 'flex',
     flexDirection: 'column',
@@ -630,9 +756,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#8890a0',
     padding: 20,
   },
-  chatMsg: {
-    lineHeight: 1.4,
-  },
+  chatMsg: { lineHeight: 1.4 },
   chatInputRow: {
     display: 'flex',
     gap: 6,
@@ -671,5 +795,32 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 14,
     fontWeight: 'bold',
     cursor: 'pointer',
+  },
+  modalScrim: {
+    position: 'fixed', inset: 0, zIndex: 80,
+    background: 'rgba(0,0,0,0.55)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    padding: 24,
+  },
+  modal: {
+    background: '#2a1810',
+    border: '1px solid rgba(200,150,70,0.35)',
+    borderRadius: 14,
+    padding: 20,
+    maxWidth: 340,
+    width: '100%',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 10,
+  },
+  modalTitle: { margin: 0, color: '#ffd700', fontSize: 18 },
+  modalBody: { margin: 0, color: '#c4b49a', fontSize: 14, lineHeight: 1.4 },
+  stayBtn: {
+    padding: '10px 14px', border: 'none', borderRadius: 8,
+    background: '#c4784a', color: '#fff', fontWeight: 700, cursor: 'pointer',
+  },
+  leaveConfirmBtn: {
+    padding: '10px 14px', border: '1px solid #e74c3c', borderRadius: 8,
+    background: 'transparent', color: '#e74c3c', fontWeight: 700, cursor: 'pointer',
   },
 };

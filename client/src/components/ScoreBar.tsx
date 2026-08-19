@@ -14,6 +14,7 @@ interface ScoreBarProps {
   currentColor?: PlayerColor | null;
   dice?: [number, number] | null;
   rightActions?: ReactNode;
+  awayColors?: PlayerColor[];
 }
 
 /**
@@ -26,6 +27,7 @@ export default function ScoreBar({
   currentColor,
   dice,
   rightActions,
+  awayColors,
 }: ScoreBarProps) {
   const order = gameState.turnOrder?.length
     ? gameState.turnOrder
@@ -40,6 +42,7 @@ export default function ScoreBar({
           const isCurrent = currentColor === color && !gameState.winner;
           const isWinner = gameState.winner === color;
           const isMe = myColor === color;
+          const away = !p.isAI && !!awayColors?.includes(color);
           const longest = gameState.longestRoad.color === color;
           const army = gameState.largestArmy.color === color;
           return (
@@ -50,12 +53,13 @@ export default function ScoreBar({
                 isCurrent ? 'score-pill-current' : '',
                 isWinner ? 'score-pill-winner' : '',
                 isMe ? 'score-pill-me' : '',
+                away ? 'score-pill-away' : '',
               ].filter(Boolean).join(' ')}
               style={{ ['--pc' as string]: COLOR_HEX[color] }}
             >
               <span className="score-swatch" />
               <span className="score-name">
-                {p.name}{p.isAI ? ' ·AI' : ''}{isMe ? ' ·you' : ''}
+                {p.name}{p.isAI ? ' ·AI' : ''}{isMe ? ' ·you' : ''}{away ? ' ·away' : ''}
               </span>
               <span className="score-vp" title="Victory points">
                 <span className="score-trophy">🏆</span>

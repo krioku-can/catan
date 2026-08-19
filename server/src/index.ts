@@ -4,7 +4,7 @@ import cors from 'cors';
 import { Server } from 'socket.io';
 import { v4 as uuidv4 } from 'uuid';
 import type { GameState, GameConfig, PlayerColor, ResourceType } from './game/types.js';
-import { createInitialState, getCurrentPlayer, getPlayerByColor, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, executeBankTrade, proposePublicTrade, respondToTrade, completeTradeWith, cancelTradeOffer, normalizePlayerDevCards, countHeldDevCards, getStealTargets, stealFrom } from './game/rules.js';
+import { createInitialState, getCurrentPlayer, getPlayerByColor, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, executeBankTrade, proposePublicTrade, respondToTrade, completeTradeWith, cancelTradeOffer, normalizePlayerDevCards, countHeldDevCards, getStealTargets, stealFrom, checkVictory, hiddenVictoryPoints } from './game/rules.js';
 import { getPortRate } from './game/board.js';
 import { dropSubscription, getVapidPublicKey, notifyPlayer, saveSubscription, shouldPush, type PushSub } from './push.js';
 
@@ -16,12 +16,17 @@ const ALLOWED_ORIGINS = new Set<string>([
   CORS_ORIGIN,
   'http://localhost:5173',
   'http://127.0.0.1:5173',
+  'http://localhost:8080',
+  'http://127.0.0.1:8080',
 ]);
 const corsOriginFn = (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
   if (!origin) return cb(null, true); // non-browser / same-origin
   if (ALLOWED_ORIGINS.has(origin)) return cb(null, true);
   // Allow any 192.168/10./172.1x LAN origin (phones hitting the Mac dev server).
   if (/^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(origin)) {
+    return cb(null, true);
+  }
+  if (/grok-sandbox\.com|grok\.me/.test(origin)) {
     return cb(null, true);
   }
   cb(null, false);
@@ -38,7 +43,12 @@ interface Room {
     victoryPointsToWin: 10 | 12;
     friendlyRobber: boolean;
     boardMode: 'random' | 'balanced';
+    turnTimer: boolean;
   };
+  turnDeadline: number | null;
+  pausedRemaining: number | null;
+  timerGen: number;
+  discardGen: number;
 }
 
 interface PlayerConnection {
@@ -63,6 +73,34 @@ function generateRoomCode(): string {
 
 const COLORS: PlayerColor[] = ['red', 'blue', 'white', 'orange'];
 
+const TURN_MS = 70_000;
+const ROBBER_BONUS_MS = 30_000;
+const DISCARD_MS = 45_000;
+
+function defaultSettings(): Room['settings'] {
+  return {
+    victoryPointsToWin: 10,
+    friendlyRobber: false,
+    boardMode: 'balanced',
+    turnTimer: false,
+  };
+}
+
+function nextColor(room: Room): PlayerColor {
+  const used = new Set(room.players.map(p => p.color));
+  return COLORS.find(c => !used.has(c)) || 'red';
+}
+
+function reclaimSeat(room: Room, player: PlayerConnection, socket: { id: string; join: (room: string) => void }, name?: string) {
+  if (player.socketId && player.socketId !== socket.id) {
+    socketToRoom.delete(player.socketId);
+  }
+  player.socketId = socket.id;
+  if (name && name.trim()) player.name = name.trim();
+  socketToRoom.set(socket.id, room.id);
+  socket.join(room.id);
+}
+
 /** Hide other players' cards/resources — only counts are public */
 function sanitizeGameStateForPlayer(gs: GameState, viewerColor: PlayerColor | null): GameState {
   // Normalize legacy VP / missing-id cards before send.
@@ -84,10 +122,13 @@ function sanitizeGameStateForPlayer(gs: GameState, viewerColor: PlayerColor | nu
       const totalResources = (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
         .reduce((sum, r) => sum + (p.resources[r] || 0), 0);
       const hiddenDev = countHeldDevCards(p);
+      const hiddenVP = hiddenVictoryPoints(p);
       return {
         ...p,
+        victoryPoints: Math.max(0, (p.victoryPoints || 0) - hiddenVP),
         resources: { brick: 0, lumber: 0, wool: 0, grain: 0, ore: 0 },
         // Face-down stubs only — count matches real held cards; types hidden.
+        // VP cards stay in the hidden count so the public score doesn't leak them.
         devCards: Array.from({ length: hiddenDev }, (_, i) => ({
           id: `hidden_${p.color}_${i}`,
           type: 'knight' as const,
@@ -103,14 +144,251 @@ function sanitizeGameStateForPlayer(gs: GameState, viewerColor: PlayerColor | nu
 
 function emitGameToRoom(room: Room, action?: string, result?: unknown) {
   if (!room.gameState) return;
+  const timer = serializeTimer(room);
   for (const conn of room.players) {
     if (conn.isAI || !conn.socketId) continue;
     const payload = {
       gameState: sanitizeGameStateForPlayer(room.gameState, conn.color),
-      ...(action !== undefined ? { action, result } : {}),
+      timer,
+      ...(action !== undefined ? { action, result: sanitizeActionResult(action, result, conn.color) } : {}),
     };
     io.to(conn.socketId).emit(action === undefined ? 'game_started' : 'game_update',
-      action === undefined ? { gameState: payload.gameState } : payload);
+      action === undefined ? { gameState: payload.gameState, timer } : payload);
+  }
+}
+
+function sanitizeActionResult(action: string | undefined, result: unknown, viewer: PlayerColor) {
+  if (!result || typeof result !== 'object') return result;
+  const r = result as { resource?: string; to?: PlayerColor };
+  if (action === 'steal' && r.resource && r.to && r.to !== viewer) {
+    const { resource: _hidden, ...rest } = r as Record<string, unknown>;
+    return rest;
+  }
+  return result;
+}
+
+function serializeTimer(room: Room) {
+  return {
+    enabled: !!room.settings?.turnTimer,
+    deadline: room.turnDeadline,
+    paused: room.turnDeadline == null && room.pausedRemaining != null,
+    pausedRemainingMs: room.pausedRemaining,
+  };
+}
+
+function clearTurnTimer(room: Room) {
+  room.timerGen++;
+  room.discardGen++;
+  room.turnDeadline = null;
+  room.pausedRemaining = null;
+}
+
+function armTurnClock(room: Room, ms: number) {
+  room.timerGen++;
+  const gen = room.timerGen;
+  room.pausedRemaining = null;
+  room.turnDeadline = Date.now() + Math.max(0, ms);
+  setTimeout(() => {
+    if (room.timerGen !== gen) return;
+    onTurnTimeout(room);
+  }, Math.max(0, ms) + 40);
+}
+
+function pauseTurnTimer(room: Room) {
+  if (room.turnDeadline == null) return;
+  room.pausedRemaining = Math.max(0, room.turnDeadline - Date.now());
+  room.timerGen++;
+  room.turnDeadline = null;
+}
+
+function resumeTurnTimer(room: Room) {
+  if (room.pausedRemaining == null) return;
+  const ms = room.pausedRemaining;
+  room.pausedRemaining = null;
+  armTurnClock(room, ms);
+}
+
+function addRobberBonus(room: Room) {
+  if (!room.settings.turnTimer) return;
+  if (room.pausedRemaining != null) {
+    room.pausedRemaining += ROBBER_BONUS_MS;
+    return;
+  }
+  if (room.turnDeadline != null) {
+    const left = Math.max(0, room.turnDeadline - Date.now());
+    armTurnClock(room, left + ROBBER_BONUS_MS);
+    return;
+  }
+  armTurnClock(room, ROBBER_BONUS_MS);
+}
+
+function armDiscardWatch(room: Room) {
+  room.discardGen++;
+  const gen = room.discardGen;
+  setTimeout(() => {
+    if (room.discardGen !== gen || !room.gameState) return;
+    if (room.gameState.phase !== 'discard') return;
+    autoDiscardHumans(room.gameState);
+    autoDiscardAIs(room.gameState);
+    emitGameToRoom(room, 'discard', { success: true, timedOut: true });
+    afterActionTimer(room, snapshotTurn(room));
+    scheduleAITurn(room, 400);
+  }, DISCARD_MS);
+}
+
+function afterActionTimer(
+  room: Room,
+  prev: { color: PlayerColor | null; discard?: PlayerColor[]; started?: boolean },
+  opts?: { rolledSeven?: boolean },
+) {
+  if (!room.settings?.turnTimer || !room.gameState || room.gameState.winner) {
+    clearTurnTimer(room);
+    return;
+  }
+  const gs = room.gameState;
+  if (opts?.rolledSeven) addRobberBonus(room);
+
+  if (gs.phase === 'discard') {
+    if (room.turnDeadline != null) pauseTurnTimer(room);
+    armDiscardWatch(room);
+    emitTimerSync(room);
+    return;
+  }
+
+  room.discardGen++;
+  const current = getCurrentPlayer(gs);
+  if (current.isAI) {
+    clearTurnTimer(room);
+    emitTimerSync(room);
+    return;
+  }
+
+  const newTurn = !!prev.started || prev.color !== current.color;
+  if (newTurn) {
+    armTurnClock(room, TURN_MS);
+  } else if (room.pausedRemaining != null) {
+    resumeTurnTimer(room);
+  }
+  emitTimerSync(room);
+}
+
+function emitTimerSync(room: Room) {
+  if (!room.gameState) return;
+  emitGameToRoom(room, 'timer_sync', serializeTimer(room));
+}
+
+function autoDiscardHumans(gs: NonNullable<Room['gameState']>) {
+  const resources: ResourceType[] = ['brick', 'lumber', 'wool', 'grain', 'ore'];
+  let guard = 0;
+  while (gs.phase === 'discard' && guard++ < 10) {
+    const human = gs.players.find(p => !p.isAI && gs.discardQueue.includes(p.color));
+    if (!human) break;
+    const total = resources.reduce((s, r) => s + (human.resources[r] || 0), 0);
+    const mustDiscard = Math.floor(total / 2);
+    const toDiscard: Partial<Record<ResourceType, number>> = {};
+    let remaining = mustDiscard;
+    const sorted = [...resources].sort((a, b) => (human.resources[b] || 0) - (human.resources[a] || 0));
+    for (const r of sorted) {
+      if (remaining <= 0) break;
+      const take = Math.min(human.resources[r] || 0, remaining);
+      if (take > 0) { toDiscard[r] = take; remaining -= take; }
+    }
+    discardResources(gs, human.color, toDiscard);
+  }
+}
+
+function announceTimeout(room: Room, name: string, detail: string) {
+  io.to(room.id).emit('chat_message', {
+    playerName: 'Table',
+    playerColor: 'white',
+    text: `Time's up — ${name}${detail}`,
+  });
+}
+
+function onTurnTimeout(room: Room) {
+  const gs = room.gameState;
+  if (!gs || gs.winner || !room.settings.turnTimer) return;
+  const current = getCurrentPlayer(gs);
+  console.log(`[timer] timeout ${room.id} ${current.name} phase=${gs.phase}`);
+
+  if (gs.phase === 'discard') {
+    autoDiscardHumans(gs);
+    autoDiscardAIs(gs);
+    announceTimeout(room, current.name, ': leftover cards discarded');
+    emitGameToRoom(room, 'discard', { success: true, timedOut: true });
+    afterActionTimer(room, snapshotTurn(room));
+    scheduleAITurn(room, 400);
+    return;
+  }
+
+  if (gs.setupPhase) {
+    const name = current.name;
+    forceHumanAsAI(room, 2);
+    announceTimeout(room, name, ': setup piece placed');
+    afterActionTimer(room, { color: current.color, discard: [] });
+    scheduleAITurn(room, 400);
+    return;
+  }
+
+  if (gs.pendingRobberMove && !gs.robberMovedThisTurn) {
+    const name = current.name;
+    forceHumanAsAI(room, 1);
+    if (gs.phase === 'trade' || gs.phase === 'build') endTurn(gs);
+    announceTimeout(room, name, ': robber moved, turn ended');
+    emitGameToRoom(room, 'end_turn', { success: true, timedOut: true });
+    afterActionTimer(room, { color: current.color, discard: [] });
+    scheduleAITurn(room, 400);
+    return;
+  }
+
+  if (gs.phase === 'roll') {
+    const name = current.name;
+    const [d1, d2] = rollDice(gs);
+    const seven = d1 + d2 === 7;
+    if (seven) autoDiscardAIs(gs);
+    announceTimeout(room, name, seven ? ': rolled a 7' : `: rolled ${d1 + d2}, turn ended`);
+    if (seven) {
+      emitGameToRoom(room, 'roll_dice', { dice: [d1, d2], total: d1 + d2, robberMode: true, timedOut: true });
+      afterActionTimer(room, { color: current.color, discard: [] }, { rolledSeven: true });
+      return;
+    }
+    endTurn(gs);
+    emitGameToRoom(room, 'end_turn', { success: true, timedOut: true, dice: [d1, d2] });
+    afterActionTimer(room, { color: current.color, discard: [] });
+    scheduleAITurn(room, 400);
+    return;
+  }
+
+  if (gs.phase === 'trade' || gs.phase === 'build') {
+    const name = current.name;
+    endTurn(gs);
+    announceTimeout(room, name, ': turn ended');
+    emitGameToRoom(room, 'end_turn', { success: true, timedOut: true });
+    afterActionTimer(room, { color: current.color, discard: [] });
+    scheduleAITurn(room, 400);
+  }
+}
+
+/** Temporarily treat the current human as AI so existing AI move logic can finish a step. */
+function forceHumanAsAI(room: Room, maxSteps: number) {
+  if (!room.gameState) return;
+  const player = getCurrentPlayer(room.gameState);
+  const color = player.color;
+  const wasAI = player.isAI;
+  player.isAI = true;
+  try {
+    for (let i = 0; i < maxSteps; i++) {
+      if (!room.gameState) break;
+      const cur = getCurrentPlayer(room.gameState);
+      if (cur.color !== color) break;
+      cur.isAI = true;
+      const action = aiTurn(room.gameState);
+      if (!action) break;
+      applyAiAction(room, action, cur);
+    }
+  } finally {
+    const p = room.gameState?.players.find(x => x.color === color);
+    if (p) p.isAI = wasAI;
   }
 }
 
@@ -255,11 +533,11 @@ io.on('connection', (socket) => {
       }],
       gameState: null,
       hostId: playerId,
-      settings: {
-        victoryPointsToWin: 10,
-        friendlyRobber: true,
-        boardMode: 'balanced',
-      },
+      settings: defaultSettings(),
+      turnDeadline: null,
+      pausedRemaining: null,
+      timerGen: 0,
+      discardGen: 0,
     };
 
     rooms.set(roomCode, room);
@@ -272,39 +550,68 @@ io.on('connection', (socket) => {
   });
 
   // ── Join Room ──
-  socket.on('join_room', ({ roomCode, name }: { roomCode: string; name: string }, callback) => {
-    const room = rooms.get(roomCode.toUpperCase());
+  socket.on('join_room', ({ roomCode, name, playerId: existingId }: { roomCode: string; name: string; playerId?: string }, callback) => {
+    const code = (roomCode || '').toUpperCase();
+    const room = rooms.get(code);
     if (!room) {
-      callback({ error: 'Room not found' });
+      callback({ error: 'Table not found — check the code' });
       return;
     }
+
+    const trimmed = (name || '').trim() || 'Player';
+
+    // Reclaim an existing seat by id (refresh / same device) or by name if that
+    // person is parked (lost session, opened the invite again).
+    const byId = existingId
+      ? room.players.find(p => p.playerId === existingId && !p.isAI)
+      : undefined;
+    const parkedByName = room.players.find(p =>
+      !p.isAI && !p.socketId && p.name.trim().toLowerCase() === trimmed.toLowerCase()
+    );
+    const seat = byId || parkedByName;
+    if (seat) {
+      reclaimSeat(room, seat, socket, trimmed);
+      console.log(`[room] ${seat.name} reclaimed seat in ${code}`);
+      callback({ playerId: seat.playerId, color: seat.color, rejoined: true });
+      io.to(code).emit('room_update', serializeRoom(room));
+      if (room.gameState) {
+        const payload = {
+          gameState: sanitizeGameStateForPlayer(room.gameState, seat.color),
+          timer: serializeTimer(room),
+        };
+        socket.emit('game_started', payload);
+        socket.emit('game_update', payload);
+      }
+      return;
+    }
+
     if (room.gameState) {
-      callback({ error: 'Game already in progress — ask host to restart, or rejoin if you were already in' });
+      callback({ error: 'Game already in progress. Sit down with the same name you used before to reclaim your seat.' });
       return;
     }
     if (room.players.length >= 4) {
-      callback({ error: 'Room is full' });
+      callback({ error: 'This table is full' });
       return;
     }
 
     const playerId = uuidv4();
-    const color = COLORS[room.players.length];
+    const color = nextColor(room);
     room.players.push({
       socketId: socket.id,
       playerId,
-      name: name || `Player ${room.players.length + 1}`,
+      name: trimmed,
       color,
       isAI: false,
       ready: false,
     });
 
-    socketToRoom.set(socket.id, roomCode.toUpperCase());
-    socket.join(roomCode.toUpperCase());
+    socketToRoom.set(socket.id, code);
+    socket.join(code);
 
-    console.log(`[room] ${name} joined ${roomCode}`);
+    console.log(`[room] ${trimmed} joined ${code}`);
     callback({ playerId, color });
-    io.to(roomCode.toUpperCase()).emit('room_update', serializeRoom(room));
-    notifyTurnChange(room, { color: null, discard: [], joinedName: name || 'Someone' });
+    io.to(code).emit('room_update', serializeRoom(room));
+    notifyTurnChange(room, { color: null, discard: [], joinedName: trimmed });
   });
 
   // ── Rejoin after refresh / brief disconnect ──
@@ -337,10 +644,10 @@ io.on('connection', (socket) => {
     if (room.gameState) {
       const payload = {
         gameState: sanitizeGameStateForPlayer(room.gameState, player.color),
+        timer: serializeTimer(room),
       };
       socket.emit('game_started', payload);
-      // Also push as update so OnlineGame stays mounted
-      socket.emit('game_update', { gameState: payload.gameState });
+      socket.emit('game_update', payload);
     }
   });
 
@@ -392,11 +699,11 @@ io.on('connection', (socket) => {
     if (room.players.length >= 4) return;
 
     const playerId = uuidv4();
-    const color = COLORS[room.players.length];
+    const color = nextColor(room);
     room.players.push({
       socketId: '',
       playerId,
-      name: `AI ${room.players.length + 1}`,
+      name: `AI ${room.players.filter(p => p.isAI).length + 1}`,
       color,
       isAI: true,
       ready: true,
@@ -434,15 +741,21 @@ io.on('connection', (socket) => {
       playerNames: room.players.map(p => p.name),
       aiPlayers: room.players.map((p, i) => p.isAI ? i : -1).filter(i => i >= 0),
       victoryPointsToWin: room.settings?.victoryPointsToWin ?? 10,
-      friendlyRobber: room.settings?.friendlyRobber ?? true,
+      friendlyRobber: room.settings?.friendlyRobber ?? false,
       boardMode: room.settings?.boardMode ?? 'balanced',
     };
 
     room.gameState = createInitialState(config);
-    console.log(`[game] Started in ${roomCode} with ${room.players.length} players · ${config.victoryPointsToWin}VP`);
+    const rolled = rollTurnOrder(room.gameState);
+    room.gameState.phase = 'setup_settlement';
+    room.gameState.setupRound = 0;
+    console.log(`[game] Started in ${roomCode} with ${room.players.length} players · ${config.victoryPointsToWin}VP · first=${room.gameState.turnOrder[0]}`);
 
     emitGameToRoom(room);
+    emitGameToRoom(room, 'roll_turn_order', { order: rolled.order, rolls: rolled.rolls, started: true });
     notifyTurnChange(room, { color: null, discard: [], started: true });
+    afterActionTimer(room, { color: null, discard: [], started: true });
+    scheduleAITurn(room, 600);
   });
 
   // Host updates custom game settings (Catan Universe-style)
@@ -453,9 +766,7 @@ io.on('connection', (socket) => {
     if (!room || room.gameState) return;
     const conn = room.players.find(p => p.socketId === socket.id);
     if (!conn || conn.playerId !== room.hostId) return;
-    if (!room.settings) {
-      room.settings = { victoryPointsToWin: 10, friendlyRobber: true, boardMode: 'balanced' };
-    }
+    if (!room.settings) room.settings = defaultSettings();
     if (partial.victoryPointsToWin === 10 || partial.victoryPointsToWin === 12) {
       room.settings.victoryPointsToWin = partial.victoryPointsToWin;
     }
@@ -464,6 +775,9 @@ io.on('connection', (socket) => {
     }
     if (partial.boardMode === 'random' || partial.boardMode === 'balanced') {
       room.settings.boardMode = partial.boardMode;
+    }
+    if (typeof partial.turnTimer === 'boolean') {
+      room.settings.turnTimer = partial.turnTimer;
     }
     io.to(roomCode).emit('room_update', serializeRoom(room));
   });
@@ -476,10 +790,20 @@ io.on('connection', (socket) => {
     if (!room?.gameState) return;
 
     const gs = room.gameState;
-    const prev = snapshotTurn(room);
-    const player = getCurrentPlayer(gs);
     const conn = room.players.find(p => p.socketId === socket.id);
-    if (!conn || conn.color !== player.color) return;
+    if (!conn) return;
+
+    const current = getCurrentPlayer(gs);
+    const isCurrent = !!current && conn.color === current.color;
+    const spectatorOk = ['discard', 'accept_trade', 'reject_trade', 'counter_trade'].includes(action);
+    if (!isCurrent && !spectatorOk) return;
+
+    const robberPending = !!gs.pendingRobberMove && !gs.robberMovedThisTurn && gs.phase !== 'discard';
+    if (robberPending && isCurrent && !['move_robber', 'steal', 'discard'].includes(action)) {
+      return;
+    }
+    const prev = snapshotTurn(room);
+    const player = current;
 
     let result: any = null;
 
@@ -512,17 +836,34 @@ io.on('connection', (socket) => {
         break;
       }
       case 'move_robber': {
-        const err = moveRobber(gs, data.q, data.r);
+        if (!getCurrentPlayer(gs) || getCurrentPlayer(gs).color !== conn.color) return;
+        if (!gs.pendingRobberMove || gs.robberMovedThisTurn) return;
+        const err = moveRobber(gs, Number(data.q), Number(data.r));
         if (err) return;
-        // Return legal steal targets from the NEW hex so the client can pick.
-        const targets = getStealTargets(gs, data.q, data.r);
-        result = { success: true, stealTargets: targets };
+        const targets = getStealTargets(gs, Number(data.q), Number(data.r));
+        result = { success: true, stealTargets: targets, hex: { q: Number(data.q), r: Number(data.r) } };
         break;
       }
       case 'steal': {
-        const err = stealFrom(gs, data.target);
+        if (!isCurrent) return;
+        if (!gs.robberMovedThisTurn) return;
+        const [rq, rr] = (gs.robberHex || '0,0').split(',').map(Number);
+        const legal = getStealTargets(gs, rq, rr);
+        if (!legal.includes(data.target)) return;
+        const out: { resource?: ResourceType } = {};
+        const err = stealFrom(gs, data.target, out);
         if (err) return;
-        result = { success: true };
+        result = {
+          success: true,
+          from: data.target,
+          to: conn.color,
+          resource: out.resource,
+        };
+        io.to(room.id).emit('chat_message', {
+          playerName: conn.name,
+          playerColor: conn.color,
+          text: `stole a resource from ${getPlayerByColor(gs, data.target)?.name || data.target}`,
+        });
         break;
       }
       case 'place_settlement': {
@@ -668,18 +1009,15 @@ io.on('connection', (socket) => {
     }
 
     if (result !== null) {
+      checkVictory(gs);
+      const rolledSeven = action === 'roll_dice' && result && (result as { total?: number }).total === 7;
       emitGameToRoom(room, action, result);
       notifyTurnChange(room, prev);
-
-      // Check for AI turns
-      setTimeout(() => {
-        if (!room.gameState) return;
-        const current = getCurrentPlayer(room.gameState);
-        const aiConn = room.players.find(p => p.color === current.color && p.isAI);
-        if (aiConn) {
-          runAITurn(room);
-        }
-      }, 800);
+      afterActionTimer(room, prev, { rolledSeven: !!rolledSeven });
+      if (action === 'propose_trade' || action === 'counter_trade') {
+        scheduleAITradeResponses(room);
+      }
+      scheduleAITurn(room, 800);
     }
   };
 
@@ -728,33 +1066,11 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // In an active game, keep the seat so the player can rejoin (don't kick mid-game).
-    if (room.gameState) {
-      player.socketId = '';
-      socketToRoom.delete(socket.id);
-      io.to(roomCode).emit('room_update', serializeRoom(room));
-      console.log(`[disconnect] ${player.name} parked in ${roomCode} (in-game)`);
-      return;
-    }
-
-    // Lobby: remove the player
-    const idx = room.players.indexOf(player);
-    if (idx >= 0) room.players.splice(idx, 1);
-
-    if (room.hostId === player.playerId) {
-      const newHost = room.players.find(p => !p.isAI);
-      if (newHost) room.hostId = newHost.playerId;
-    }
-
-    if (room.players.filter(p => !p.isAI).length === 0) {
-      rooms.delete(roomCode);
-      console.log(`[room] Deleted ${roomCode} (empty lobby)`);
-    } else {
-      io.to(roomCode).emit('room_update', serializeRoom(room));
-    }
-
+    // Keep the seat (lobby or in-game) so family can lock a phone and come back.
+    player.socketId = '';
     socketToRoom.delete(socket.id);
-    console.log(`[disconnect] ${socket.id}`);
+    io.to(roomCode).emit('room_update', serializeRoom(room));
+    console.log(`[disconnect] ${player.name} parked in ${roomCode}${room.gameState ? ' (in-game)' : ' (lobby)'}`);
   });
 });
 
@@ -784,58 +1100,188 @@ function autoDiscardAIs(gs: NonNullable<Room['gameState']>) {
   }
 }
 
+function scheduleAITurn(room: Room, delayMs = 600) {
+  setTimeout(() => {
+    if (!room.gameState) return;
+    const current = getCurrentPlayer(room.gameState);
+    if (current?.isAI) runAITurn(room);
+  }, delayMs);
+}
+
+/** AIs answer public table offers even when it is not their turn. */
+function scheduleAITradeResponses(room: Room) {
+  if (!room.gameState) return;
+  const ais = room.gameState.players.filter(p => p.isAI);
+  if (ais.length === 0) return;
+  ais.forEach((ai, i) => {
+    setTimeout(() => {
+      const gs = room.gameState;
+      if (!gs) return;
+      const offer = gs.tradeOffers.find(o => o.to === undefined);
+      if (!offer || offer.from === ai.color) return;
+      if ((offer.acceptedBy || []).includes(ai.color)) return;
+      if ((offer.rejectedBy || []).includes(ai.color)) return;
+      const giveTotal = Object.values(offer.give || {}).reduce((s, n) => s + (Number(n) || 0), 0);
+      const wantTotal = Object.values(offer.want || {}).reduce((s, n) => s + (Number(n) || 0), 0);
+      const resources: ResourceType[] = ['brick', 'lumber', 'wool', 'grain', 'ore'];
+      const surplus = resources.filter(r => (ai.resources[r] || 0) >= 3);
+      const scarce = resources.filter(r => (ai.resources[r] || 0) <= 1);
+      const givesSurplus = Object.keys(offer.want || {}).every(r => surplus.includes(r as ResourceType));
+      const getsScarce = Object.keys(offer.give || {}).some(r => scarce.includes(r as ResourceType));
+      let canPay = true;
+      for (const [r, n] of Object.entries(offer.want || {})) {
+        if ((ai.resources[r as ResourceType] || 0) < (Number(n) || 0)) canPay = false;
+      }
+      const favorable = canPay && (wantTotal >= giveTotal || (givesSurplus && getsScarce));
+      const err = respondToTrade(gs, ai.color, offer.from, favorable);
+      if (err) return;
+      emitGameToRoom(room, favorable ? 'accept_trade' : 'reject_trade', {
+        success: true,
+        from: offer.from,
+        by: ai.color,
+      });
+      io.to(room.id).emit('chat_message', {
+        playerName: ai.name,
+        playerColor: ai.color,
+        text: favorable ? 'accepted the table offer' : 'declined the table offer',
+      });
+    }, 550 + i * 450);
+  });
+}
+
 // ── AI Turn Runner ──
 function runAITurn(room: Room) {
   if (!room.gameState) return;
   const gs = room.gameState;
   const prev = snapshotTurn(room);
+  const current = getCurrentPlayer(gs);
+  if (!current?.isAI) return;
+
   const action = aiTurn(gs);
   if (!action) return;
+  if (!applyAiAction(room, action, current)) return;
+
+  checkVictory(gs);
+  notifyTurnChange(room, prev);
+  afterActionTimer(room, prev);
+  scheduleAITurn(room, 600);
+}
+
+function applyAiAction(
+  room: Room,
+  action: { action: string; data?: any },
+  current: { name: string },
+): boolean {
+  const gs = room.gameState;
+  if (!gs) return false;
 
   switch (action.action) {
     case 'roll_dice': {
       const [d1, d2] = rollDice(gs);
-      if (d1 + d2 === 7) {
-        // Same as human roll path: drain every AI discard so the queue
-        // doesn't freeze with multiple AIs waiting.
-        autoDiscardAIs(gs);
-      }
-      emitGameToRoom(room, 'roll_dice', { dice: [d1, d2], total: d1 + d2 });
-      break;
+      if (d1 + d2 === 7) autoDiscardAIs(gs);
+      emitGameToRoom(room, 'roll_dice', { dice: [d1, d2], total: d1 + d2, robberMode: d1 + d2 === 7 });
+      return true;
     }
     case 'skip_trade': {
       gs.phase = 'build';
       emitGameToRoom(room, 'skip_trade', { success: true });
-      break;
+      return true;
     }
     case 'roll_turn_order': {
-      // rollTurnOrder already ran inside aiTurn; just sync the room
       emitGameToRoom(room, 'roll_turn_order', { order: gs.turnOrder });
-      break;
+      return true;
     }
     case 'discard': {
-      // aiTurn already applied the current AI's discard. Drain any other AIs
-      // still in the queue (multi-AI 7), matching the local Game.tsx fix.
       autoDiscardAIs(gs);
       emitGameToRoom(room, 'discard', { success: true });
-      break;
+      return true;
     }
-    case 'place_settlement':
-    case 'place_road':
-    case 'place_city':
-    case 'buy_dev_card':
-    case 'end_turn':
+    case 'place_settlement': {
+      const key = action.data?.key;
+      if (gs.setupPhase) {
+        const err = placeSetupSettlement(gs, key);
+        if (err) {
+          console.warn(`[ai] ${current.name} settlement failed: ${err}`);
+          return false;
+        }
+        advanceSetup(gs);
+      } else {
+        const err = placeSettlement(gs, key);
+        if (err) {
+          console.warn(`[ai] ${current.name} settlement failed: ${err}`);
+          return false;
+        }
+      }
+      emitGameToRoom(room, 'place_settlement', { success: true, key });
+      return true;
+    }
+    case 'place_road': {
+      const key = action.data?.key;
+      if (gs.setupPhase) {
+        const err = placeSetupRoad(gs, key);
+        if (err) {
+          console.warn(`[ai] ${current.name} road failed: ${err}`);
+          return false;
+        }
+        advanceSetup(gs);
+      } else {
+        const err = placeRoad(gs, key);
+        if (err) {
+          console.warn(`[ai] ${current.name} road failed: ${err}`);
+          return false;
+        }
+      }
+      emitGameToRoom(room, 'place_road', { success: true, key });
+      return true;
+    }
+    case 'place_city': {
+      const key = action.data?.key;
+      const err = placeCity(gs, key);
+      if (err) {
+        console.warn(`[ai] ${current.name} city failed: ${err}`);
+        return false;
+      }
+      emitGameToRoom(room, 'place_city', { success: true, key });
+      return true;
+    }
+    case 'buy_dev_card': {
+      const card = buyDevCard(gs);
+      emitGameToRoom(room, 'buy_dev_card', { card: card ? { type: card.type } : null });
+      return true;
+    }
+    case 'end_turn': {
+      endTurn(gs);
+      emitGameToRoom(room, 'end_turn', { success: true });
+      return true;
+    }
+    case 'play_knight':
     case 'accept_trade':
     case 'reject_trade':
     case 'complete_trade':
-    case 'cancel_trade':
-    case 'move_robber': {
-      // aiTurn already applied the robber move + steal; just sync the room.
+    case 'cancel_trade': {
       emitGameToRoom(room, action.action, { success: true });
-      break;
+      return true;
+    }
+    case 'move_robber': {
+      const stoleFrom = action.data?.stoleFrom as PlayerColor | undefined;
+      const victim = stoleFrom ? getPlayerByColor(gs, stoleFrom) : null;
+      emitGameToRoom(room, 'move_robber', {
+        success: true,
+        stealTargets: [],
+        stoleFrom,
+        hex: action.data ? { q: action.data.q, r: action.data.r } : undefined,
+        alreadyStole: !!victim,
+      });
+      if (victim) {
+        io.to(room.id).emit('chat_message', {
+          playerName: current.name,
+          playerColor: (current as { color?: PlayerColor }).color || 'white',
+          text: `stole a resource from ${victim.name}`,
+        });
+      }
+      return true;
     }
     case 'bank_trade': {
-      // AI returns {give: 'res', get: 'res'} — one rate unit.
       const give = action.data.give as ResourceType;
       const get = action.data.get as ResourceType;
       const p = getCurrentPlayer(gs);
@@ -843,21 +1289,14 @@ function runAITurn(room: Room) {
       const err = executeBankTrade(gs, give, rate, get);
       if (!err) {
         emitGameToRoom(room, 'bank_trade', { give: { [give]: rate }, want: { [get]: 1 }, success: true });
+        return true;
       }
-      break;
+      return false;
     }
+    default:
+      console.warn(`[ai] unhandled action ${action.action}`);
+      return false;
   }
-
-  notifyTurnChange(room, prev);
-
-  // Chain AI turns
-  setTimeout(() => {
-    if (!room.gameState) return;
-    const current = getCurrentPlayer(room.gameState);
-    if (current.isAI) {
-      runAITurn(room);
-    }
-  }, 600);
 }
 
 // ── Helpers ──
@@ -874,11 +1313,8 @@ function serializeRoom(room: Room) {
     })),
     hostId: room.hostId,
     inGame: room.gameState !== null,
-    settings: room.settings || {
-      victoryPointsToWin: 10,
-      friendlyRobber: true,
-      boardMode: 'balanced',
-    },
+    settings: room.settings || defaultSettings(),
+    timer: serializeTimer(room),
   };
 }
 

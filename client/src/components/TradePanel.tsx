@@ -277,9 +277,11 @@ export default function TradePanel({ gameState, isMyTurn, phase, onBankTrade, on
               <div style={styles.outgoing}>
                 <div style={styles.outgoingTitle}>Table offer is out</div>
                 <div style={styles.outgoingHint}>
-                  {accepted.length === 0
-                    ? 'Waiting for players to accept…'
-                    : 'Pick who to complete the trade with:'}
+                  {accepted.length > 0
+                    ? 'Pick who to complete the trade with:'
+                    : rejected.length === others.length
+                      ? 'Everyone declined — withdraw or offer again.'
+                      : `Waiting for replies (${rejected.length + accepted.length}/${others.length})…`}
                 </div>
                 <div style={styles.partnerRow}>
                   {others.map(p => {
