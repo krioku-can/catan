@@ -22,6 +22,9 @@ const ALLOWED_ORIGINS = new Set<string>([
 const corsOriginFn = (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
   if (!origin) return cb(null, true); // non-browser / same-origin
   if (ALLOWED_ORIGINS.has(origin)) return cb(null, true);
+  try {
+    if (new URL(origin).hostname.endsWith('vercel.app')) return cb(null, true);
+  } catch { /* ignore */ }
   // Allow any 192.168/10./172.1x LAN origin (phones hitting the Mac dev server).
   if (/^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(origin)) {
     return cb(null, true);

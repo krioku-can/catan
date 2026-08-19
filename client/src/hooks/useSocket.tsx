@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, useCallback, useRef, ty
 import { io, Socket } from 'socket.io-client';
 import type { GameState, PlayerColor } from '../game/types';
 import { enableTurnPush, pushPrefOn } from '../push';
-import { getServerUrl } from '../serverUrl';
+import { getServerUrl, setServerChoice } from '../serverUrl';
 import { getStored, setStored, removeStored } from '../storage';
 
 const SESSION_KEY = 'catan_online_session';
@@ -185,12 +185,15 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     setConnectionMessage('Connecting to the table…');
 
     const s = io(getServerUrl(), {
-      transports: ['websocket', 'polling'],
+      // Poll first so cell carriers / Cloudflare can connect; then upgrade.
+      transports: ['polling', 'websocket'],
+      upgrade: true,
+      rememberUpgrade: false,
       reconnection: true,
-      reconnectionAttempts: 12,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      timeout: 20000,
+      reconnectionAttempts: 20,
+      reconnectionDelay: 800,
+      reconnectionDelayMax: 4000,
+      timeout: 15000,
     });
 
     s.on('connect', () => {
@@ -280,8 +283,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   }, [attachSocket]);
 
   const retryConnect = useCallback(() => {
+    setServerChoice('cloud');
     setConnectionStatus('waking');
-    setConnectionMessage('Waking the table…');
+    setConnectionMessage('Connecting over the internet…');
     wakeServer().finally(() => attachSocket());
   }, [attachSocket]);
 

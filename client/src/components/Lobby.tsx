@@ -80,6 +80,9 @@ export default function Lobby({ onBack, initialRoomCode }: { onBack?: () => void
       <div style={styles.container}>
         <h1 style={styles.title}>CATAN</h1>
         <p style={styles.subtitle}>{connectionMessage || 'Connecting to the table…'}</p>
+        <p style={{ color: '#c4b49a', fontSize: 13, textAlign: 'center', lineHeight: 1.4, margin: '0 20px 12px' }}>
+          On cell data we’ll use the internet table — tap Retry if this is stuck.
+        </p>
         <div style={styles.spinner} aria-hidden>⏳</div>
         <button type="button" style={styles.primaryBtn} onClick={retryConnect}>
           Retry

@@ -50,11 +50,17 @@ export function setServerChoice(c: ServerChoice): void {
 
 /** Resolve the server URL for the current (persisted) choice. */
 export function getServerUrl(): string {
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    // Public family site: always Render. A leftover "Same WiFi" pick would
+    // try http://catan-lac.vercel.app:3001 and browsers block that on cellular.
+    if (host.endsWith('vercel.app') || host.endsWith('onrender.com') || !isLocalHost(host)) {
+      return cloudUrl();
+    }
+  }
   const choice = getServerChoice();
-
   if (choice === 'cloud') return cloudUrl();
   if (choice === 'lan') return lanUrl();
-  // auto
   return isLocalHost(window.location.hostname) ? lanUrl() : cloudUrl();
 }
 
