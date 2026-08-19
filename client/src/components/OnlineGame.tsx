@@ -73,6 +73,14 @@ export default function OnlineGame() {
       setStealTargets(lastActionResult.result.stealTargets);
       setPendingSteal({ q: 0, r: 0 }); // robber already moved; steal uses current robberHex
     }
+    // After a 7 is rolled, server signals robberMode=true. Surface the
+    // robber-move picker so the human can move the robber (per official
+    // rules, BEFORE steal targets are computed from the new hex).
+    if (lastActionResult?.action === 'roll_dice' && lastActionResult.result?.robberMode) {
+      setRobberMode(true);
+      setStealTargets([]); // empty until move_robber resolves
+      setPendingSteal(null);
+    }
     if (lastActionResult?.action === 'steal') sfx.steal();
     if (lastActionResult?.action === 'discard') sfx.discard();
     if (lastActionResult?.action === 'place_settlement' || lastActionResult?.action === 'place_city') sfx.build();

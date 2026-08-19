@@ -5,7 +5,7 @@ import { Server } from 'socket.io';
 import { v4 as uuidv4 } from 'uuid';
 import type { GameState, GameConfig, PlayerColor, ResourceType } from './game/types.js';
 import { createInitialState, getCurrentPlayer, getPlayerByColor, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, executeBankTrade, proposePublicTrade, respondToTrade, completeTradeWith, cancelTradeOffer, normalizePlayerDevCards, countHeldDevCards, getStealTargets, stealFrom } from './game/rules.js';
-import { getHexCorners, getPortRate } from './game/board.js';
+import { getPortRate } from './game/board.js';
 import { dropSubscription, getVapidPublicKey, notifyPlayer, saveSubscription, shouldPush, type PushSub } from './push.js';
 
 const PORT = parseInt(process.env.PORT || '3001');
@@ -503,22 +503,11 @@ io.on('connection', (socket) => {
         if (d1 + d2 === 7) {
           // Auto-discard for AI players who have >7 cards.
           autoDiscardAIs(gs);
-          // Find steal targets
-          const [rq, rr] = gs.robberHex.split(',').map(Number);
-          const targets: PlayerColor[] = [];
-          const corners = getHexCorners(rq, rr);
-          corners.forEach(cKey => {
-            const inter = gs.intersections[cKey];
-            if (inter?.owner && inter.owner !== player.color) {
-              const p = gs.players.find(p => p.color === inter.owner);
-              if (p) {
-                const hasRes = (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[]).some(r => (p.resources[r] || 0) > 0);
-                if (hasRes) targets.push(inter.owner);
-              }
-            }
-          });
+          // Per official Catan rules, the roller MUST move the robber to a
+          // new hex BEFORE stealing. Steal targets are computed by the
+          // 'move_robber' case from the NEW hex — not here from the current
+          // one. Just signal robberMode and let the client drive the move.
           result.robberMode = true;
-          result.stealTargets = targets;
         }
         break;
       }
