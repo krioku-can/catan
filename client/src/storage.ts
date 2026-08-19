@@ -4,9 +4,10 @@
 const memoryStore: Record<string, string> = {};
 
 function storageAvailable(): boolean {
+  if (typeof window === "undefined") return false;
   try {
-    const k = '__catan_test__';
-    window.localStorage.setItem(k, '1');
+    const k = "__catan_test__";
+    window.localStorage.setItem(k, "1");
     window.localStorage.removeItem(k);
     return true;
   } catch {
@@ -14,10 +15,8 @@ function storageAvailable(): boolean {
   }
 }
 
-const canStore = storageAvailable();
-
 export function getStored(key: string): string | null {
-  if (canStore) {
+  if (storageAvailable()) {
     try {
       return window.localStorage.getItem(key);
     } catch {
@@ -29,11 +28,22 @@ export function getStored(key: string): string | null {
 
 export function setStored(key: string, value: string): void {
   memoryStore[key] = value;
-  if (canStore) {
+  if (storageAvailable()) {
     try {
       window.localStorage.setItem(key, value);
     } catch {
       // memoryStore already has it
+    }
+  }
+}
+
+export function removeStored(key: string): void {
+  delete memoryStore[key];
+  if (storageAvailable()) {
+    try {
+      window.localStorage.removeItem(key);
+    } catch {
+      // ignore
     }
   }
 }
