@@ -14,6 +14,7 @@ import GameLog from './GameLog';
 import DiscardModal from './DiscardModal';
 import DevCardPanel from './DevCardPanel';
 import TurnCoach from './TurnCoach';
+import DevCardReveal from './DevCardReveal';
 import { recordGame } from '../stats';
 import { setStored, getStored } from '../storage';
 import { unlockAudio, sfx, isMuted, setMuted } from '../audio';
@@ -60,6 +61,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
   const [pendingSteal, setPendingSteal] = useState<{ q: number; r: number } | null>(null);
   const [showPanel, setShowPanel] = useState<'actions' | 'hand' | 'log' | null>(null);
   const [diceFlash, setDiceFlash] = useState<{ total: number; faces: [number, number] } | null>(null);
+  const [devReveal, setDevReveal] = useState<{ type?: string | null; buyerName?: string } | null>(null);
   const [debug, setDebug] = useState(() => new URLSearchParams(window.location.search).get('debug') === '1');
   const [turnOrderRolls, setTurnOrderRolls] = useState<Record<string, number> | null>(null);
   const [muted, setMutedState] = useState(() => isMuted());
@@ -298,10 +300,12 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           placeCity(gameState, action.data.key);
           addLog(`${current.name} built a city`);
           break;
-        case 'buy_dev_card':
-          buyDevCard(gameState);
-          addLog(`${current.name} bought a dev card`);
+        case 'buy_dev_card': {
+          const card = buyDevCard(gameState);
+          addLog(`${current.name} bought a development card`);
+          if (card) setDevReveal({ buyerName: current.name });
           break;
+        }
         case 'bank_trade':
           // 4:1 bank trade: give 4 of one resource, get 1 of another
           {
@@ -548,7 +552,9 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     if (!gameState) return;
     const card = buyDevCard(gameState);
     if (card) {
-      addLog(`${getCurrentPlayer(gameState).name} bought a development card (${card.type})`);
+      sfx.devCard();
+      addLog(`${getCurrentPlayer(gameState).name} bought a development card`);
+      setDevReveal({ type: card.type });
       setGameState({ ...gameState });
     }
   }, [gameState, addLog]);
@@ -727,6 +733,13 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           faces={diceFlash?.faces ?? null}
           onDone={() => setDiceFlash(null)}
         />
+        {devReveal && (
+          <DevCardReveal
+            type={devReveal.type}
+            buyerName={devReveal.buyerName}
+            onDone={() => setDevReveal(null)}
+          />
+        )}
         <div className="hand-bar-float">
           <HandBar player={me} />
         </div>

@@ -162,10 +162,13 @@ function emitGameToRoom(room: Room, action?: string, result?: unknown) {
 
 function sanitizeActionResult(action: string | undefined, result: unknown, viewer: PlayerColor) {
   if (!result || typeof result !== 'object') return result;
-  const r = result as { resource?: string; to?: PlayerColor };
+  const r = result as { resource?: string; to?: PlayerColor; buyer?: PlayerColor; card?: { type?: string } | null };
   if (action === 'steal' && r.resource && r.to && r.to !== viewer) {
     const { resource: _hidden, ...rest } = r as Record<string, unknown>;
     return rest;
+  }
+  if (action === 'buy_dev_card' && r.buyer && r.buyer !== viewer) {
+    return { bought: true, buyer: r.buyer };
   }
   return result;
 }
@@ -902,7 +905,7 @@ io.on('connection', (socket) => {
       }
       case 'buy_dev_card': {
         const card = buyDevCard(gs);
-        result = { card: card ? { type: card.type } : null };
+        result = { card: card ? { type: card.type } : null, buyer: player.color };
         break;
       }
       case 'play_knight': {
@@ -1250,7 +1253,7 @@ function applyAiAction(
     }
     case 'buy_dev_card': {
       const card = buyDevCard(gs);
-      emitGameToRoom(room, 'buy_dev_card', { card: card ? { type: card.type } : null });
+      emitGameToRoom(room, 'buy_dev_card', { card: card ? { type: card.type } : null, buyer: getCurrentPlayer(gs).color });
       return true;
     }
     case 'end_turn': {

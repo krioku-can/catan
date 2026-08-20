@@ -103,6 +103,11 @@ export const sfx = {
   click() {
     tone(800, 0.03, 'square', 0.025);
   },
+  devCard() {
+    tone(392, 0.08, 'triangle', 0.05);
+    setTimeout(() => tone(523, 0.12, 'sine', 0.06), 70);
+    setTimeout(() => tone(659, 0.16, 'sine', 0.05), 150);
+  },
   error() {
     tone(140, 0.12, 'sawtooth', 0.04);
   },

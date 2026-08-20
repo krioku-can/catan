@@ -16,6 +16,7 @@ import TradeOffers from './TradeOffers';
 import TurnCoach from './TurnCoach';
 import PushToggle from './PushToggle';
 import TurnTimer from './TurnTimer';
+import DevCardReveal from './DevCardReveal';
 import { unlockAudio, sfx, isMuted, setMuted } from '../audio';
 import { getTurnCoach } from '../turnCoach';
 
@@ -34,6 +35,7 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
   const [muted, setMutedState] = useState(() => isMuted());
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [orderFlash, setOrderFlash] = useState<{ order: PlayerColor[]; rolls: Record<string, number> } | null>(null);
+  const [devReveal, setDevReveal] = useState<{ type?: string | null; buyerName?: string } | null>(null);
   const lastTurnColorRef = useRef<string | null>(null);
   const lastDiceKeyRef = useRef<string>('');
 
@@ -106,6 +108,22 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
     if (lastActionResult?.action === 'discard') sfx.discard();
     if (lastActionResult?.action === 'place_settlement' || lastActionResult?.action === 'place_city') sfx.build();
     if (lastActionResult?.action === 'place_road') sfx.road();
+    if (lastActionResult?.action === 'buy_dev_card') {
+      const res = lastActionResult.result as { card?: { type?: string } | null; buyer?: PlayerColor; bought?: boolean } | null;
+      if (!res) return;
+      const type = res.card?.type;
+      if (!type && !res.bought) return;
+      const myColor = room?.players.find(rp => rp.playerId === playerId)?.color;
+      const buyer = res.buyer;
+      const buyerName = (buyer && gameState?.players.find(p => p.color === buyer)?.name) || 'Someone';
+      if (type && (!buyer || buyer === myColor)) {
+        sfx.devCard();
+        setDevReveal({ type });
+      } else {
+        sfx.click();
+        setDevReveal({ buyerName });
+      }
+    }
   }, [lastActionResult]);
 
   useEffect(() => {
@@ -387,6 +405,13 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
           faces={diceFlash?.faces ?? null}
           onDone={() => setDiceFlash(null)}
         />
+        {devReveal && (
+          <DevCardReveal
+            type={devReveal.type}
+            buyerName={devReveal.buyerName}
+            onDone={() => setDevReveal(null)}
+          />
+        )}
         {myPlayer && (
           <div className="hand-bar-float">
             <HandBar player={myPlayer} />
