@@ -1262,6 +1262,9 @@ function applyAiAction(
       return true;
     }
     case 'play_knight':
+    case 'play_year_of_plenty':
+    case 'play_monopoly':
+    case 'play_road_building':
     case 'accept_trade':
     case 'reject_trade':
     case 'complete_trade':

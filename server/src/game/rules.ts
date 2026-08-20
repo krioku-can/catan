@@ -1,7 +1,7 @@
 // Core game rules and state management
 
-import type { GameState, GameConfig, Player, PlayerColor, ResourceType, DevelopmentCard, HexTile, Edge } from './types.js';
-import { generateBoard, canPlaceSettlement, canPlaceRoad, getResourceProduction, getAdjacentIntersections, getEdgesForIntersection, getHexCorners, getPortRate } from './board.js';
+import type { GameState, GameConfig, Player, PlayerColor, ResourceType, DevelopmentCard, HexTile, Edge } from './types';
+import { generateBoard, canPlaceSettlement, canPlaceRoad, getResourceProduction, getAdjacentIntersections, getEdgesForIntersection, getHexCorners, getPortRate } from './board';
 
 const RESOURCES: ResourceType[] = ['brick', 'lumber', 'wool', 'grain', 'ore'];
 
@@ -1018,12 +1018,189 @@ function getAdjacentHexes(intersectionKey: string, board: HexTile[]): HexTile[] 
   return board.filter(tile => getHexCorners(tile.q, tile.r).includes(intersectionKey));
 }
 
-// Simple AI: make a random valid move
+function pipDots(n?: number): number {
+  if (!n || n === 7) return 0;
+  return Math.max(0, 6 - Math.abs(7 - n));
+}
+
+const AI_TYPE_W: Record<string, number> = {
+  brick: 1.45, ore: 1.4, lumber: 1.25, grain: 1.25, wool: 0.85,
+};
+
+function producedTypes(state: GameState, color: PlayerColor): Set<string> {
+  const have = new Set<string>();
+  for (const inter of Object.values(state.intersections)) {
+    if (inter.owner !== color || !inter.building) continue;
+    for (const h of getAdjacentHexes(inter.key, state.board)) {
+      if (h.type !== 'desert' && h.type !== 'water') have.add(h.type);
+    }
+  }
+  return have;
+}
+
+function portAt(state: GameState, key: string): number {
+  for (const port of state.ports) {
+    const spots = port.coastalIntersections || [];
+    if (spots.includes(key)) return port.type === '3:1' ? 2.4 : 4.2;
+  }
+  return 0;
+}
+
+function scoreSpot(state: GameState, key: string, color: PlayerColor, secondSetup: boolean): number {
+  const hexes = getAdjacentHexes(key, state.board);
+  let pips = 0;
+  const types = new Set<string>();
+  let hot = 0;
+  let land = 0;
+  for (const h of hexes) {
+    if (h.type === 'desert' || h.type === 'water') continue;
+    land++;
+    const d = pipDots(h.number);
+    pips += d * (AI_TYPE_W[h.type] || 1);
+    types.add(h.type);
+    if (h.number === 6 || h.number === 8) hot++;
+  }
+  let score = pips * 3.2 + types.size * 2.8 + hot * 2.2 + land * 0.6 + portAt(state, key);
+  if (secondSetup) {
+    const have = producedTypes(state, color);
+    for (const t of types) {
+      if (!have.has(t)) score += 3.8;
+    }
+  }
+  return score;
+}
+
+function pickFromRanked<T>(ranked: T[], level: Player['aiLevel']): T {
+  if (ranked.length === 1) return ranked[0];
+  if (level === 'hard') return ranked[0];
+  if (level === 'easy') {
+    const slice = ranked.slice(0, Math.max(2, Math.ceil(ranked.length * 0.5)));
+    return slice[Math.floor(Math.random() * slice.length)];
+  }
+  const n = Math.min(3, ranked.length);
+  return ranked[Math.floor(Math.random() * n)];
+}
+
+function settlementCandidates(state: GameState, color: PlayerColor) {
+  return Object.values(state.intersections).filter(i => {
+    if (i.building) return false;
+    if (!canPlaceSettlement(i.key, state.intersections, state.edges)) return false;
+    const adj = getEdgesForIntersection(i.key, state.edges);
+    return adj.some(e => e.road === color);
+  });
+}
+
+function cityCandidates(state: GameState, color: PlayerColor) {
+  return Object.values(state.intersections).filter(
+    i => i.building === 'settlement' && i.owner === color,
+  );
+}
+
+function roadCandidates(state: GameState, color: PlayerColor) {
+  return Object.values(state.edges).filter(
+    e => !e.road && canPlaceRoad(e.key, color, state.edges, state.intersections),
+  );
+}
+
+function scoreRoad(state: GameState, edge: Edge, color: PlayerColor): number {
+  let score = 1;
+  for (const end of [edge.from, edge.to]) {
+    const inter = state.intersections[end];
+    if (!inter) continue;
+    if (!inter.building && canPlaceSettlement(end, state.intersections, state.edges)) {
+      const connected = getEdgesForIntersection(end, state.edges).some(e => e.road === color);
+      if (!connected) score += 12 + scoreSpot(state, end, color, false);
+    }
+    const adj = getAdjacentIntersections(end, state.edges);
+    for (const n of adj) {
+      const ni = state.intersections[n];
+      if (ni && !ni.building && canPlaceSettlement(n, state.intersections, state.edges)) {
+        score += 2 + scoreSpot(state, n, color, false) * 0.15;
+      }
+    }
+  }
+  const myLen = calculateLongestRoad(color, { ...state.edges, [edge.key]: { ...edge, road: color } });
+  const held = state.longestRoad.length || 0;
+  if (myLen >= 5 && myLen > held) score += 18;
+  else if (state.longestRoad.color && state.longestRoad.color !== color && myLen >= held - 1) score += 8;
+  return score;
+}
+
+function handTotal(p: Player): number {
+  return RESOURCES.reduce((s, r) => s + (p.resources[r] || 0), 0);
+}
+
+function neededFor(player: Player, cost: Partial<Record<ResourceType, number>>): ResourceType[] {
+  const miss: ResourceType[] = [];
+  for (const r of RESOURCES) {
+    const need = cost[r] || 0;
+    const have = player.resources[r] || 0;
+    for (let i = 0; i < Math.max(0, need - have); i++) miss.push(r);
+  }
+  return miss;
+}
+
+function tryBankFor(state: GameState, player: Player, want: ResourceType): { action: string; data?: any } | null {
+  const rateGive = (r: ResourceType) => getPortRate(player.color, r, state.ports, state.intersections);
+  let best: ResourceType | null = null;
+  let bestSpare = -1;
+  for (const r of RESOURCES) {
+    if (r === want) continue;
+    const rate = rateGive(r);
+    const have = player.resources[r] || 0;
+    if (have < rate) continue;
+    const spare = have - rate;
+    if (spare > bestSpare) {
+      bestSpare = spare;
+      best = r;
+    }
+  }
+  if (!best) return null;
+  const rate = rateGive(best);
+  return { action: 'bank_trade', data: { give: best, get: want, amount: rate } };
+}
+
+function aiMoveRobber(state: GameState, player: Player): { action: string; data?: any } | null {
+  const best = pickRobberHex(state, player.color);
+  if (!best) {
+    state.robberMovedThisTurn = true;
+    state.pendingRobberMove = false;
+    return null;
+  }
+  moveRobber(state, best.q, best.r);
+  const targets = getStealTargets(state, best.q, best.r);
+  let stoleFrom: PlayerColor | undefined;
+  let stolen: ResourceType | undefined;
+  if (targets.length > 0) {
+    const ranked = [...targets].sort((a, b) => {
+      const pa = getPlayerByColor(state, a);
+      const pb = getPlayerByColor(state, b);
+      const vp = (pb?.victoryPoints || 0) - (pa?.victoryPoints || 0);
+      if (vp) return vp;
+      return handTotal(pb!) - handTotal(pa!);
+    });
+    const target = player.aiLevel === 'easy'
+      ? targets[Math.floor(Math.random() * targets.length)]
+      : ranked[0];
+    const out: { resource?: ResourceType } = {};
+    if (!stealFrom(state, target, out)) {
+      stoleFrom = target;
+      stolen = out.resource;
+    }
+  }
+  return { action: 'move_robber', data: { q: best.q, r: best.r, stoleFrom, resource: stolen } };
+}
+
+function robberOnMe(state: GameState, color: PlayerColor): boolean {
+  const [q, r] = (state.robberHex || '').split(',').map(Number);
+  return getHexCorners(q, r).some(k => state.intersections[k]?.owner === color);
+}
+
 export function aiTurn(state: GameState): { action: string; data?: any } | null {
   const player = getCurrentPlayer(state);
   if (!player.isAI) return null;
+  const level = player.aiLevel || 'normal';
 
-  // Turn-order roll — AI rolls and advances to setup automatically
   if (state.phase === 'turn_order') {
     rollTurnOrder(state);
     state.phase = 'setup_settlement';
@@ -1031,107 +1208,85 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
     return { action: 'roll_turn_order' };
   }
 
-  // During setup
   if (state.setupPhase) {
     if (state.phase === 'setup_settlement') {
-      // Score each free corner by the resource value of adjacent hexes.
-      // Brick & ore are the bottlenecks (brick for road/settlement, ore for
-      // city/devcard) so weight them highest. This stops the AI from placing
-      // both settlements on spots with zero brick/ore, which deadlocked games.
+      const second = state.setupRound >= state.players.length * 2;
       const candidates: { key: string; score: number }[] = [];
-      Object.values(state.intersections).forEach(inter => {
-        if (inter.building) return;
-        // Official distance rule on every setup settlement
+      for (const inter of Object.values(state.intersections)) {
+        if (inter.building) continue;
         const adjacent = getAdjacentIntersections(inter.key, state.edges);
-        if (adjacent.some(a => state.intersections[a]?.building)) return;
-        const hexes = getAdjacentHexes(inter.key, state.board);
-        let score = 0;
-        hexes.forEach(h => {
-          if (h.type === 'desert' || h.type === 'water') return;
-          const w = h.type === 'brick' ? 3 : h.type === 'ore' ? 3 : 1;
-          score += w;
-        });
-        candidates.push({ key: inter.key, score });
-      });
-
-      if (candidates.length > 0) {
-        candidates.sort((a, b) => b.score - a.score);
-        if (player.aiLevel === 'hard') {
-          // Hard: always take the single best spot.
-          return { action: 'place_settlement', data: { key: candidates[0].key } };
-        }
-        // Easy: pick randomly from the whole list (can settle badly).
-        const topCount = player.aiLevel === 'easy'
-          ? candidates.length
-          : Math.max(1, Math.ceil(candidates.length * 0.3));
-        const top = candidates.slice(0, topCount);
-        const pick = top[Math.floor(Math.random() * top.length)];
-        return { action: 'place_settlement', data: { key: pick.key } };
+        if (adjacent.some(a => state.intersections[a]?.building)) continue;
+        candidates.push({ key: inter.key, score: scoreSpot(state, inter.key, player.color, second) });
       }
+      if (candidates.length === 0) return null;
+      candidates.sort((a, b) => b.score - a.score);
+      const pick = pickFromRanked(candidates, level);
+      return { action: 'place_settlement', data: { key: pick.key } };
     }
     if (state.phase === 'setup_road') {
-      // Official rule: the setup road MUST connect to the settlement just
-      // placed. Prefer a settlement that currently has zero roads attached
-      // (the new one); never attach both setup roads to the first settlement.
       const mySettlements = Object.values(state.intersections)
         .filter(i => i.owner === player.color && i.building);
-
       const roadCountAt = (key: string) =>
         Object.values(state.edges).filter(
           e => e.road === player.color && (e.from === key || e.to === key),
         ).length;
-
-      // Settlements with fewest roads first (0 = just placed)
-      const ordered = [...mySettlements].sort(
-        (a, b) => roadCountAt(a.key) - roadCountAt(b.key),
-      );
-
-      for (const inter of ordered) {
-        const validEdges = Object.values(state.edges).filter(
-          e => !e.road && (e.from === inter.key || e.to === inter.key),
+      const ordered = [...mySettlements].sort((a, b) => roadCountAt(a.key) - roadCountAt(b.key));
+      const fresh = ordered[0];
+      if (fresh) {
+        const edges = Object.values(state.edges).filter(
+          e => !e.road && (e.from === fresh.key || e.to === fresh.key),
         );
-        if (validEdges.length > 0) {
-          const pick = validEdges[Math.floor(Math.random() * validEdges.length)];
+        if (edges.length > 0) {
+          const ranked = edges
+            .map(e => ({ key: e.key, score: scoreRoad(state, e, player.color) }))
+            .sort((a, b) => b.score - a.score);
+          const pick = pickFromRanked(ranked, level);
           return { action: 'place_road', data: { key: pick.key } };
         }
       }
-      // Absolute last resort — any free edge touching any of our settlements
       const anyEdge = Object.values(state.edges).find(
-        e =>
-          !e.road &&
-          mySettlements.some(s => s.key === e.from || s.key === e.to),
+        e => !e.road && mySettlements.some(s => s.key === e.from || s.key === e.to),
       );
       if (anyEdge) return { action: 'place_road', data: { key: anyEdge.key } };
-      // Do NOT advance_setup without a road — return null and wait
       return null;
     }
-    // Settlement phase with no candidates should not skip either
     return null;
   }
 
-  // Normal play
   if (state.phase === 'roll') {
+    if (level !== 'easy' && player.devCardsPlayedThisTurn < 1 && robberOnMe(state, player.color)) {
+      if (findPlayableDevCard(player, 'knight')) {
+        const err = playKnight(state);
+        if (err === null) return { action: 'play_knight' };
+      }
+    }
     return { action: 'roll_dice' };
   }
 
-  // Respond to any pending domestic trade offers directed at this AI, or
-  // public offers (to === undefined) that any player may accept.
-  // The AI accepts if the trade is favorable (it gives away resources it has
-  // plenty of, and receives resources it's short on); otherwise it rejects.
-  const myOffer = state.tradeOffers.find(o => o.from !== player.color && (o.to === undefined || o.to === player.color) && !(o.rejectedBy || []).includes(player.color) && !(o.acceptedBy || []).includes(player.color));
-  if (myOffer) {
-    const from = getPlayerByColor(state, myOffer.from);
-    if (from) {
-      const giveTotal = Object.values(myOffer.give || {}).reduce((s, n) => s + (Number(n) || 0), 0);
-      const wantTotal = Object.values(myOffer.want || {}).reduce((s, n) => s + (Number(n) || 0), 0);
-      const surplus = RESOURCES.filter(r => (player.resources[r] || 0) >= 3);
-      const scarce = RESOURCES.filter(r => (player.resources[r] || 0) <= 1);
-      const givesSurplus = Object.keys(myOffer.want || {}).every(r => surplus.includes(r as ResourceType));
-      const getsScarce = Object.keys(myOffer.give || {}).some(r => scarce.includes(r as ResourceType));
-      const favorable = wantTotal <= giveTotal || (givesSurplus && getsScarce);
-      respondToTrade(state, player.color, myOffer.from, favorable);
-      return { action: favorable ? 'accept_trade' : 'reject_trade', data: { from: myOffer.from } };
+  const incoming = state.tradeOffers.find(o =>
+    o.from !== player.color
+    && (o.to === undefined || o.to === player.color)
+    && !(o.rejectedBy || []).includes(player.color)
+    && !(o.acceptedBy || []).includes(player.color),
+  );
+  if (incoming) {
+    const giveTotal = Object.values(incoming.give || {}).reduce((s, n) => s + (Number(n) || 0), 0);
+    const wantTotal = Object.values(incoming.want || {}).reduce((s, n) => s + (Number(n) || 0), 0);
+    let canPay = true;
+    for (const [r, n] of Object.entries(incoming.want || {})) {
+      if ((player.resources[r as ResourceType] || 0) < (Number(n) || 0)) canPay = false;
     }
+    const fromP = getPlayerByColor(state, incoming.from);
+    const leader = [...state.players].sort((a, b) => (b.victoryPoints || 0) - (a.victoryPoints || 0))[0];
+    const helpingLeader = !!(fromP && leader && fromP.color === leader.color && fromP.color !== player.color && (leader.victoryPoints || 0) >= 7);
+    const surplus = RESOURCES.filter(r => (player.resources[r] || 0) >= 3);
+    const scarce = RESOURCES.filter(r => (player.resources[r] || 0) <= 1);
+    const givesSurplus = Object.keys(incoming.want || {}).every(r => surplus.includes(r as ResourceType));
+    const getsScarce = Object.keys(incoming.give || {}).some(r => scarce.includes(r as ResourceType));
+    const evenOrBetter = wantTotal <= giveTotal;
+    const favorable = canPay && !helpingLeader && (evenOrBetter || (givesSurplus && getsScarce));
+    respondToTrade(state, player.color, incoming.from, favorable);
+    return { action: favorable ? 'accept_trade' : 'reject_trade', data: { from: incoming.from } };
   }
 
   const myTable = state.tradeOffers.find(o => o.from === player.color && o.to === undefined);
@@ -1141,158 +1296,191 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
     if (err === null) return { action: 'complete_trade', data: { partner } };
   }
 
-  // Discard phase after a 7: AI discards half its hand automatically.
   if (state.phase === 'discard') {
     if (state.discardQueue.includes(player.color)) {
-      const total = RESOURCES.reduce((s, r) => s + (player.resources[r] || 0), 0);
-      const mustDiscard = Math.floor(total / 2);
+      const total = handTotal(player);
+      let remaining = Math.floor(total / 2);
+      const keep: Record<ResourceType, number> = { brick: 0, lumber: 0, wool: 0, grain: 0, ore: 0 };
+      const cityNeed = neededFor(player, BUILDING_COSTS.city);
+      const settNeed = neededFor(player, BUILDING_COSTS.settlement);
+      const goal = cityNeed.length <= settNeed.length ? BUILDING_COSTS.city : BUILDING_COSTS.settlement;
+      for (const r of RESOURCES) keep[r] = Math.min(player.resources[r] || 0, goal[r] || 0);
       const toDiscard: Partial<Record<ResourceType, number>> = {};
-      let remaining = mustDiscard;
-      // Discard from the most abundant resources first.
-      const sorted = [...RESOURCES].sort((a, b) => (player.resources[b] || 0) - (player.resources[a] || 0));
-      for (const r of sorted) {
+      const dumpOrder = [...RESOURCES].sort((a, b) => {
+        const extraA = (player.resources[a] || 0) - keep[a];
+        const extraB = (player.resources[b] || 0) - keep[b];
+        return extraB - extraA;
+      });
+      for (const r of dumpOrder) {
         if (remaining <= 0) break;
-        const take = Math.min(player.resources[r] || 0, remaining);
-        if (take > 0) { toDiscard[r] = take; remaining -= take; }
+        const extra = Math.max(0, (player.resources[r] || 0) - keep[r]);
+        const take = Math.min(extra, remaining);
+        if (take > 0) { toDiscard[r] = (toDiscard[r] || 0) + take; remaining -= take; }
+      }
+      if (remaining > 0) {
+        for (const r of RESOURCES) {
+          if (remaining <= 0) break;
+          const left = (player.resources[r] || 0) - (toDiscard[r] || 0);
+          const take = Math.min(left, remaining);
+          if (take > 0) { toDiscard[r] = (toDiscard[r] || 0) + take; remaining -= take; }
+        }
       }
       discardResources(state, player.color, toDiscard);
       return { action: 'discard', data: { discard: toDiscard } };
     }
-    // If the AI doesn't need to discard but the phase is discard, it's waiting
-    // on other players — do nothing until the queue clears.
     return null;
   }
 
-  if (state.phase === 'trade') {
-    // ONLY move the robber after a 7 or a Knight — never on ordinary production rolls.
-    if (state.pendingRobberMove && !state.robberMovedThisTurn) {
-      const best = pickRobberHex(state, player.color);
-      if (best) {
-        moveRobber(state, best.q, best.r);
-        const targets = getStealTargets(state, best.q, best.r);
-        let stoleFrom: PlayerColor | undefined;
-        let stolen: ResourceType | undefined;
-        if (targets.length > 0) {
-          const target = targets[Math.floor(Math.random() * targets.length)];
-          const out: { resource?: ResourceType } = {};
-          if (!stealFrom(state, target, out)) {
-            stoleFrom = target;
-            stolen = out.resource;
-          }
-        }
-        return { action: 'move_robber', data: { q: best.q, r: best.r, stoleFrom, resource: stolen } };
+  if (state.pendingRobberMove && !state.robberMovedThisTurn) {
+    const moved = aiMoveRobber(state, player);
+    if (moved) return moved;
+  }
+
+  const canPlayDev = player.devCardsPlayedThisTurn < 1
+    && (state.phase === 'trade' || state.phase === 'build');
+
+  if (canPlayDev && level !== 'easy') {
+    const yop = findPlayableDevCard(player, 'year_of_plenty');
+    if (yop) {
+      const cityMiss = neededFor(player, BUILDING_COSTS.city);
+      const settMiss = neededFor(player, BUILDING_COSTS.settlement);
+      const miss = (cityMiss.length > 0 && cityMiss.length <= 2) ? cityMiss
+        : (settMiss.length > 0 && settMiss.length <= 2) ? settMiss
+        : cityMiss.length ? cityMiss : settMiss;
+      if (miss.length > 0) {
+        const r1 = miss[0];
+        const r2 = miss[1] || miss[0];
+        const err = playYearOfPlenty(state, r1, r2);
+        if (err === null) return { action: 'play_year_of_plenty', data: { res1: r1, res2: r2 } };
       }
-      state.robberMovedThisTurn = true;
-      state.pendingRobberMove = false;
     }
-    // AI skips trading and goes to build
+
+    const mono = findPlayableDevCard(player, 'monopoly');
+    if (mono) {
+      let best: ResourceType | null = null;
+      let bestN = 2;
+      for (const r of RESOURCES) {
+        let n = 0;
+        for (const o of state.players) {
+          if (o.color === player.color) continue;
+          n += o.resources[r] || 0;
+        }
+        if (n > bestN) { bestN = n; best = r; }
+      }
+      if (best && bestN >= (level === 'hard' ? 3 : 4)) {
+        const err = playMonopoly(state, best);
+        if (err === null) return { action: 'play_monopoly', data: { resource: best } };
+      }
+    }
+
+    const rb = findPlayableDevCard(player, 'road_building');
+    if (rb && player.roadsRemaining > 0) {
+      const roads = roadCandidates(state, player.color);
+      const wouldSettle = roads.some(e => scoreRoad(state, e, player.color) >= 12);
+      const myLen = calculateLongestRoad(player.color, state.edges);
+      const stealRoad = myLen >= 3 && (state.longestRoad.color !== player.color);
+      if (wouldSettle || stealRoad) {
+        const err = playRoadBuilding(state);
+        if (err === null) return { action: 'play_road_building' };
+      }
+    }
+
+    const knight = findPlayableDevCard(player, 'knight');
+    if (knight) {
+      const leader = [...state.players].sort((a, b) => (b.victoryPoints || 0) - (a.victoryPoints || 0))[0];
+      const chaseArmy = player.playedKnights >= 2
+        || (player.playedKnights >= 1 && (state.largestArmy.size || 0) <= 3);
+      const blockLeader = leader && leader.color !== player.color && (leader.victoryPoints || 0) >= 6;
+      if (robberOnMe(state, player.color) || chaseArmy || blockLeader || level === 'hard') {
+        const err = playKnight(state);
+        if (err === null) return { action: 'play_knight' };
+      }
+    }
+  }
+
+  if (state.phase === 'trade') {
     state.phase = 'build';
     return { action: 'skip_trade' };
   }
 
   if (state.phase === 'build') {
-    // Finish free Road Building placements first.
     if (state.pendingDevAction === 'road_building' && state.pendingDevRoads > 0) {
-      const freeSpots = Object.values(state.edges)
-        .filter(e => !e.road && canPlaceRoad(e.key, player.color, state.edges, state.intersections));
+      const freeSpots = roadCandidates(state, player.color)
+        .map(e => ({ key: e.key, score: scoreRoad(state, e, player.color) }))
+        .sort((a, b) => b.score - a.score);
       if (player.roadsRemaining > 0 && freeSpots.length > 0) {
-        const pick = freeSpots[Math.floor(Math.random() * freeSpots.length)];
-        return { action: 'place_road', data: { key: pick.key } };
+        return { action: 'place_road', data: { key: freeSpots[0].key } };
       }
-      // Can't place more free roads — clear the pending action so we don't stall.
       state.pendingDevAction = null;
       state.pendingDevRoads = 0;
     }
 
-    // Hard AI: try to play a Knight card before building (pursues largest army
-    // and moves the robber to block a leader). Easy AI never does.
-    if (player.aiLevel === 'hard') {
-      const hasKnight = player.devCards.some(
-        c => c.type === 'knight' && !c.played && !c.boughtThisTurn,
-      );
-      if (hasKnight && player.devCardsPlayedThisTurn < 1) {
-        const err = playKnight(state);
-        if (err === null) return { action: 'play_knight' };
+    const cities = cityCandidates(state, player.color)
+      .map(i => ({ key: i.key, score: scoreSpot(state, i.key, player.color, false) }))
+      .sort((a, b) => b.score - a.score);
+    if (player.citiesRemaining > 0 && cities.length > 0) {
+      if (canAfford(player, BUILDING_COSTS.city)) {
+        const pick = pickFromRanked(cities, level);
+        return { action: 'place_city', data: { key: pick.key } };
+      }
+      const miss = neededFor(player, BUILDING_COSTS.city);
+      if (miss.length === 1) {
+        const bank = tryBankFor(state, player, miss[0]);
+        if (bank) return bank;
       }
     }
 
-    // Try to build something
-    // Priority: city > settlement > dev card > road
-
-    // Check cities
-    const citySpots = Object.values(state.intersections)
-      .filter(i => i.building === 'settlement' && i.owner === player.color);
-    if (player.citiesRemaining > 0 && citySpots.length > 0 && canAfford(player, { grain: 2, ore: 3 })) {
-      const pick = citySpots[Math.floor(Math.random() * citySpots.length)];
-      return { action: 'place_city', data: { key: pick.key } };
+    const setts = settlementCandidates(state, player.color)
+      .map(i => ({ key: i.key, score: scoreSpot(state, i.key, player.color, false) }))
+      .sort((a, b) => b.score - a.score);
+    if (player.settlementsRemaining > 0 && setts.length > 0) {
+      if (canAfford(player, BUILDING_COSTS.settlement)) {
+        const pick = pickFromRanked(setts, level);
+        return { action: 'place_settlement', data: { key: pick.key } };
+      }
+      const miss = neededFor(player, BUILDING_COSTS.settlement);
+      if (miss.length === 1) {
+        const bank = tryBankFor(state, player, miss[0]);
+        if (bank) return bank;
+      }
     }
 
-    // Check settlements
-    const settlementSpots = Object.values(state.intersections)
-      .filter(i => !i.building && canPlaceSettlement(i.key, state.intersections, state.edges));
-    // Filter to those connected to player's roads
-    const validSettlements = settlementSpots.filter(i => {
-      const adjEdges = getEdgesForIntersection(i.key, state.edges);
-      return adjEdges.some(e => e.road === player.color);
-    });
-    
-    if (player.settlementsRemaining > 0 && validSettlements.length > 0 && canAfford(player, { lumber: 1, brick: 1, wool: 1, grain: 1 })) {
-      const pick = validSettlements[Math.floor(Math.random() * validSettlements.length)];
-      return { action: 'place_settlement', data: { key: pick.key } };
-    }
-
-    // Check dev cards — only if the deck still has cards.
-    // Easy AI skips dev cards (plays a more predictable, weaker game).
     const deckLeft = (state.devDeck || []).length;
-    if (player.aiLevel !== 'easy' && deckLeft > 0 && canAfford(player, { ore: 1, wool: 1, grain: 1 })) {
+    const blocked = setts.length === 0 && (player.citiesRemaining === 0 || cities.length === 0);
+    const wantArmy = player.playedKnights >= 1 && player.playedKnights < 3;
+    if (level !== 'easy' && deckLeft > 0 && canAfford(player, BUILDING_COSTS.devCard)
+      && (blocked || wantArmy || !canAfford(player, BUILDING_COSTS.city))) {
+      if (!(canAfford(player, BUILDING_COSTS.city) && cities.length > 0)
+        && !(canAfford(player, BUILDING_COSTS.settlement) && setts.length > 0)) {
+        return { action: 'buy_dev_card' };
+      }
+    }
+
+    const roads = roadCandidates(state, player.color)
+      .map(e => ({ key: e.key, score: scoreRoad(state, e, player.color) }))
+      .sort((a, b) => b.score - a.score);
+    if (player.roadsRemaining > 0 && roads.length > 0) {
+      if (canAfford(player, BUILDING_COSTS.road)) {
+        const pick = pickFromRanked(roads, level);
+        return { action: 'place_road', data: { key: pick.key } };
+      }
+      const miss = neededFor(player, BUILDING_COSTS.road);
+      if (miss.length === 1) {
+        const bank = tryBankFor(state, player, miss[0]);
+        if (bank) return bank;
+      }
+    }
+
+    if (level !== 'easy' && deckLeft > 0 && canAfford(player, BUILDING_COSTS.devCard)) {
       return { action: 'buy_dev_card' };
     }
 
-    // Check roads
-    const roadSpots = Object.values(state.edges)
-      .filter(e => !e.road && canPlaceRoad(e.key, player.color, state.edges, state.intersections));
-    if (player.roadsRemaining > 0 && roadSpots.length > 0 && canAfford(player, { lumber: 1, brick: 1 })) {
-      const pick = roadSpots[Math.floor(Math.random() * roadSpots.length)];
-      return { action: 'place_road', data: { key: pick.key } };
+    for (const r of RESOURCES) {
+      if ((player.resources[r] || 0) > 0) continue;
+      const bank = tryBankFor(state, player, r);
+      if (bank) return bank;
     }
 
-    // 4:1 bank trade fallback — convert surplus resources into whatever is
-    // scarcest, so the AI never deadlocks on a missing resource.
-    // Determine what's needed: cheapest build the player still wants.
-    const canStillRoad = player.roadsRemaining > 0;
-    const canStillSett = player.settlementsRemaining > 0;
-    const canStillCity = player.citiesRemaining > 0;
-    const canStillDev = deckLeft > 0;
-
-    // Figure out the scarcest resource among everything that could be built.
-    const scarcity: Record<string, number> = { brick: 0, lumber: 0, wool: 0, grain: 0, ore: 0 };
-    if (canStillRoad) { scarcity.lumber++; scarcity.brick++; }
-    if (canStillSett) { scarcity.lumber++; scarcity.brick++; scarcity.wool++; scarcity.grain++; }
-    if (canStillCity) { scarcity.grain += 2; scarcity.ore += 3; }
-    if (canStillDev) { scarcity.ore++; scarcity.wool++; scarcity.grain++; }
-    // Weight by how short the player is relative to need.
-    let target: ResourceType | null = null;
-    let targetNeed = 0;
-    (Object.keys(scarcity) as ResourceType[]).forEach(res => {
-      const need = scarcity[res];
-      const have = player.resources[res] || 0;
-      if (need > 0 && have < need && (need - have) > targetNeed) {
-        targetNeed = need - have;
-        target = res;
-      }
-    });
-    if (target) {
-      // Trade a surplus resource (most abundant) for the scarce target.
-      let give: ResourceType | null = null;
-      for (const res of RESOURCES) {
-        if ((player.resources[res] || 0) >= 4 && res !== target) {
-          if (!give || (player.resources[res] > (player.resources[give] || 0))) give = res;
-        }
-      }
-      if (give) return { action: 'bank_trade', data: { give, get: target } };
-    }
-
-    // Nothing to do, end turn
     return { action: 'end_turn' };
   }
 

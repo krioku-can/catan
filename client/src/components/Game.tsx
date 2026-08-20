@@ -16,6 +16,7 @@ import DevCardPanel from './DevCardPanel';
 import TurnCoach from './TurnCoach';
 import DevCardReveal from './DevCardReveal';
 import { recordGame } from '../stats';
+import { getPortRate } from '../game/board';
 import { setStored, getStored } from '../storage';
 import { unlockAudio, sfx, isMuted, setMuted } from '../audio';
 import { getTurnCoach } from '../turnCoach';
@@ -307,16 +308,25 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           break;
         }
         case 'bank_trade':
-          // 4:1 bank trade: give 4 of one resource, get 1 of another
           {
             const give = action.data.give as ResourceType;
             const get = action.data.get as ResourceType;
-            if ((current.resources[give] || 0) >= 4) {
-              current.resources[give] -= 4;
-              current.resources[get] = (current.resources[get] || 0) + 1;
-              addLog(`${current.name} traded 4 ${give} → 1 ${get}`);
-            }
+            const rate = getPortRate(current.color, give, gameState.ports, gameState.intersections);
+            const err = executeBankTrade(gameState, give, rate, get);
+            if (err === null) addLog(`${current.name} bank-traded ${rate} ${give} → 1 ${get}`);
           }
+          break;
+        case 'play_knight':
+          addLog(`${current.name} played a Knight`);
+          break;
+        case 'play_year_of_plenty':
+          addLog(`${current.name} played Year of Plenty`);
+          break;
+        case 'play_monopoly':
+          addLog(`${current.name} played Monopoly`);
+          break;
+        case 'play_road_building':
+          addLog(`${current.name} played Road Building`);
           break;
         case 'end_turn':
           endTurn(gameState);
