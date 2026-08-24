@@ -463,30 +463,40 @@ app.post('/api/llm/move', async (req, res) => {
     return;
   }
   try {
-    const ctrl = new AbortController();
-    const timeout = setTimeout(() => ctrl.abort(), 20000);
-    const r = await fetch(OLLAMA_LLM_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${key}`,
-      },
-      signal: ctrl.signal,
-      body: JSON.stringify({
-        model: OLLAMA_LLM_MODEL,
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 500, // reasoning models need budget or they return empty
-      }),
-    });
-    clearTimeout(timeout);
-    if (!r.ok) {
-      const detail = (await r.text()).slice(0, 200);
-      res.status(200).json({ ok: false, error: `upstream ${r.status}`, detail, fp });
-      return;
+    // Retry transient 503 "overloaded" errors with backoff so a busy model
+    // doesn't stall a game. Max 3 attempts, ~1s/2s/4s.
+    let lastStatus = 0;
+    let lastDetail = '';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, 1000 * 2 ** attempt));
+      const ctrl = new AbortController();
+      const timeout = setTimeout(() => ctrl.abort(), 20000);
+      const r = await fetch(OLLAMA_LLM_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${key}`,
+        },
+        signal: ctrl.signal,
+        body: JSON.stringify({
+          model: OLLAMA_LLM_MODEL,
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 500, // reasoning models need budget or they return empty
+        }),
+      });
+      clearTimeout(timeout);
+      if (r.ok) {
+        const data = await r.json();
+        const text = data?.choices?.[0]?.message?.content || '';
+        res.json({ ok: true, text });
+        return;
+      }
+      lastStatus = r.status;
+      lastDetail = (await r.text()).slice(0, 200);
+      // Only retry on transient 5xx; bail immediately on 4xx (bad key etc).
+      if (r.status < 500) break;
     }
-    const data = await r.json();
-    const text = data?.choices?.[0]?.message?.content || '';
-    res.json({ ok: true, text });
+    res.status(200).json({ ok: false, error: `upstream ${lastStatus}`, detail: lastDetail, fp });
   } catch {
     res.status(200).json({ ok: false, error: 'llm call failed' });
   }
