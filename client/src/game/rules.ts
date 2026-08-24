@@ -2,7 +2,7 @@
 
 import type { GameState, GameConfig, Player, PlayerColor, ResourceType, DevelopmentCard, HexTile, Edge } from './types';
 import { generateBoard, canPlaceSettlement, canPlaceRoad, getResourceProduction, getAdjacentIntersections, getEdgesForIntersection, getHexCorners, getPortRate } from './board';
-import { getTraits, loadStats, PERSONALITIES, COLOR_PERSONALITY, type TraitWeights } from './personality';
+import { getTraits, loadStats, COLOR_PERSONALITY, type TraitWeights } from './personality';
 
 const RESOURCES: ResourceType[] = ['brick', 'lumber', 'wool', 'grain', 'ore'];
 

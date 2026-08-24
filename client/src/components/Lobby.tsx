@@ -96,29 +96,11 @@ export default function Lobby({ onBack, initialRoomCode }: { onBack?: () => void
 
   if (room) {
     const isHost = room.hostId === playerId;
+    const host = room.players.find(p => p.playerId === room.hostId);
+    const humans = room.players.filter(p => !p.isAI);
+    const me = room.players.find(p => p.playerId === playerId);
     const allReady = room.players.every(p => p.ready);
     const canStart = isHost && room.players.length >= 2 && allReady;
-
-    const shareLink = `https://catan-lac.vercel.app/?room=${room.id}`;
-
-    const handleShare = async () => {
-      const text = `Join my Catan table: ${room.id}\n${shareLink}`;
-      try {
-        if (navigator.share) {
-          await navigator.share({ title: 'Catan table', text, url: shareLink });
-          return;
-        }
-      } catch (e) {
-        if ((e as Error).name === 'AbortError') return;
-      }
-      try {
-        await navigator.clipboard.writeText(shareLink);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      } catch {
-        window.prompt('Copy this link to invite people:', shareLink);
-      }
-    };
 
     return (
       <div style={styles.container}>
