@@ -456,8 +456,10 @@ const OLLAMA_LLM_MODEL = process.env.OLLAMA_LLM_MODEL || 'gemma4:cloud';
 app.post('/api/llm/move', async (req, res) => {
   const key = (process.env.OLLAMA_API_KEY || '').trim();
   const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
+  // Diagnostic fingerprint (never the full key): first 6 + last 4 chars.
+  const fp = key.length >= 10 ? `${key.slice(0, 6)}…${key.slice(-4)}` : `len${key.length}`;
   if (!key || !prompt) {
-    res.status(200).json({ ok: false, error: 'no key or prompt', keyLen: key.length });
+    res.status(200).json({ ok: false, error: 'no key or prompt', keyLen: key.length, fp });
     return;
   }
   try {
@@ -479,7 +481,7 @@ app.post('/api/llm/move', async (req, res) => {
     clearTimeout(timeout);
     if (!r.ok) {
       const detail = (await r.text()).slice(0, 200);
-      res.status(200).json({ ok: false, error: `upstream ${r.status}`, detail });
+      res.status(200).json({ ok: false, error: `upstream ${r.status}`, detail, fp });
       return;
     }
     const data = await r.json();
