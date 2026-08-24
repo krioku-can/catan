@@ -3,3 +3,5 @@ dist/
 .env
 .env.local
 *.tsbuildinfo
+*.pdf
+lumi-memory-export.md

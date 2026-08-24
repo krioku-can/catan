@@ -445,6 +445,50 @@ app.post('/api/push/unsubscribe', (req, res) => {
   res.json({ ok: true });
 });
 
+// ── LLM AI proxy ──────────────────────────────────────────────────────────
+// The client builds the personality prompt and legal-move list; this endpoint
+// forwards it to Ollama Cloud with the server-held key so the key NEVER ships
+// to the browser. Returns { ok, text } where text is the model's raw reply.
+// With no key configured we return ok:false and the client falls back to the
+// rule AI (games never stall).
+const OLLAMA_LLM_URL = 'https://ollama.com/v1/chat/completions';
+const OLLAMA_LLM_MODEL = process.env.OLLAMA_LLM_MODEL || 'gemma4:cloud';
+app.post('/api/llm/move', async (req, res) => {
+  const key = process.env.OLLAMA_API_KEY;
+  const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
+  if (!key || !prompt) {
+    res.status(200).json({ ok: false, error: 'no key or prompt' });
+    return;
+  }
+  try {
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 20000);
+    const r = await fetch(OLLAMA_LLM_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${key}`,
+      },
+      signal: ctrl.signal,
+      body: JSON.stringify({
+        model: OLLAMA_LLM_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 500, // reasoning models need budget or they return empty
+      }),
+    });
+    clearTimeout(timeout);
+    if (!r.ok) {
+      res.status(200).json({ ok: false, error: `upstream ${r.status}` });
+      return;
+    }
+    const data = await r.json();
+    const text = data?.choices?.[0]?.message?.content || '';
+    res.json({ ok: true, text });
+  } catch {
+    res.status(200).json({ ok: false, error: 'llm call failed' });
+  }
+});
+
 function snapshotTurn(room: Room): { color: PlayerColor | null; discard: PlayerColor[] } {
   if (!room.gameState) return { color: null, discard: [] };
   return {

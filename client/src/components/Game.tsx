@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import type { GameState, GameConfig, PlayerColor, ResourceType } from '../game/types';
 import { createInitialState, getCurrentPlayer, getPlayerByColor, executeBankTrade, proposePublicTrade, respondToTrade, completeTradeWith, cancelTradeOffer, aiRespondToPublicOffers, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, countHeldDevCards, getStealTargets, stealFrom, checkVictory } from '../game/rules'
 import { PERSONALITIES, learnFromGame } from '../game/personality';
+import { llmChooseAction } from '../game/llmAI';
 import Board from './Board';
 import PlayerHand from './PlayerHand';
 import DiceRoller from './DiceRoller';
@@ -203,160 +204,161 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
 
     const delay = AI_SPEED_MS[aiSpeed] ?? AI_SPEED_MS.slow;
     const t = setTimeout(() => {
-      const action = aiTurn(gameState);
-      if (!action) {
-        // AI is waiting (e.g. not in the discard queue, or no legal move).
-        // Do NOT setGameState here — that creates a new object reference and
-        // re-triggers this effect, causing an infinite loop. The effect will
-        // re-run when gameState changes externally (e.g. the human discards).
-        return;
-      }
-      switch (action.action) {
-        case 'roll_dice': {
-          const [d1, d2] = rollDice(gameState);
-          addLog(`${current.name} rolled ${d1 + d2}`);
-          // Brief dice flash for AI rolls (skip on instant)
-          if (aiSpeed !== 'instant') {
-            setDiceFlash({ total: d1 + d2, faces: [d1, d2] });
-            sfx.dice();
-          }
-          // If the AI rolled a 7, the discard queue may hold OTHER AIs (the
-          // roller itself might not be in it). Drain every AI in the queue so
-          // the game doesn't freeze on "Waiting for discard: <AI>" — the
-          // `discard` case below only fires when the CURRENT AI is in the queue.
-          if (d1 + d2 === 7) {
-            let guard = 0;
-            while (gameState.phase === 'discard' && guard++ < 10) {
-              const aiInQueue = gameState.players.find(
-                p => p.isAI && gameState.discardQueue.includes(p.color)
-              );
-              if (!aiInQueue) break;
-              const total = (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
-                .reduce((s, r) => s + (aiInQueue.resources[r] || 0), 0);
-              const mustDiscard = Math.floor(total / 2);
-              const toDiscard: Partial<Record<ResourceType, number>> = {};
-              let remaining = mustDiscard;
-              const sorted = (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
-                .sort((a, b) => (aiInQueue.resources[b] || 0) - (aiInQueue.resources[a] || 0));
-              for (const r of sorted) {
-                if (remaining <= 0) break;
-                const take = Math.min(aiInQueue.resources[r] || 0, remaining);
-                if (take > 0) { toDiscard[r] = take; remaining -= take; }
-              }
-              discardResources(gameState, aiInQueue.color, toDiscard);
-              addLog(`${aiInQueue.name} discarded cards after the 7`);
-            }
-          }
-          break;
+      const run = async () => {
+        // LLM-driven personalities: for LOCAL games on the Mac, try the
+        // personality model first, then fall back to the rule AI. We skip the
+        // setup phase (6 quick placements) and only reason on real decisions,
+        // keeping setup snappy.
+        let action: { action: string; data?: any } | null = null;
+        if (!gameState.setupPhase && current.personalityId) {
+          const llm = await llmChooseAction(gameState, current);
+          if (llm.ok && llm.action) action = llm.action;
         }
-        case 'skip_trade':
-          gameState.phase = 'build';
-          break;
-        case 'move_robber':
-          // aiTurn already moved robber + steal
-          addLog(`${current.name} moved the robber`);
-          sfx.robber();
-          break;
-        case 'discard':
-          // aiTurn already applied the current AI's discard. But a 7 can put
-          // MULTIPLE AI players in the discard queue at once (the current AI
-          // rolled, other AIs also had >7 cards). Drain the rest of the AI
-          // discard queue so it doesn't freeze waiting on them.
-          {
-            let guard = 0;
-            while (gameState.phase === 'discard' && guard++ < 10) {
-              const aiInQueue = gameState.players.find(
-                p => p.isAI && gameState.discardQueue.includes(p.color)
-              );
-              if (!aiInQueue) break;
-              const total = (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
-                .reduce((s, r) => s + (aiInQueue.resources[r] || 0), 0);
-              const mustDiscard = Math.floor(total / 2);
-              const toDiscard: Partial<Record<ResourceType, number>> = {};
-              let remaining = mustDiscard;
-              const sorted = (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
-                .sort((a, b) => (aiInQueue.resources[b] || 0) - (aiInQueue.resources[a] || 0));
-              for (const r of sorted) {
-                if (remaining <= 0) break;
-                const take = Math.min(aiInQueue.resources[r] || 0, remaining);
-                if (take > 0) { toDiscard[r] = take; remaining -= take; }
-              }
-              discardResources(gameState, aiInQueue.color, toDiscard);
-              addLog(`${aiInQueue.name} discarded cards after the 7`);
-            }
-          }
-          break;
-        case 'place_settlement':
-          if (gameState.setupPhase) {
-            const err = placeSetupSettlement(gameState, action.data.key);
-            if (err === null) {
-              advanceSetup(gameState);
-              addLog(`${current.name} placed a settlement`);
-            } else {
-              addLog(`${current.name} failed settlement: ${err}`);
-            }
-          } else {
-            const err = placeSettlement(gameState, action.data.key);
-            if (err === null) addLog(`${current.name} placed a settlement`);
-          }
-          break;
-        case 'place_road':
-          if (gameState.setupPhase) {
-            const err = placeSetupRoad(gameState, action.data.key);
-            if (err === null) {
-              advanceSetup(gameState);
-              addLog(`${current.name} placed a road`);
-            } else {
-              addLog(`${current.name} failed road: ${err}`);
-            }
-          } else {
-            const err = placeRoad(gameState, action.data.key);
-            if (err === null) addLog(`${current.name} placed a road`);
-          }
-          break;
-        case 'place_city':
-          placeCity(gameState, action.data.key);
-          addLog(`${current.name} built a city`);
-          break;
-        case 'buy_dev_card': {
-          const card = buyDevCard(gameState);
-          addLog(`${current.name} bought a development card`);
-          if (card) setDevReveal({ buyerName: current.name });
-          break;
+        if (!action) action = aiTurn(gameState);
+        if (!action) {
+          // AI is waiting (e.g. not in the discard queue, or no legal move).
+          // Do NOT setGameState here — that creates a new object reference and
+          // re-triggers this effect, causing an infinite loop. The effect will
+          // re-run when gameState changes externally (e.g. the human discards).
+          return;
         }
-        case 'bank_trade':
-          {
-            const give = action.data.give as ResourceType;
-            const get = action.data.get as ResourceType;
-            const rate = getPortRate(current.color, give, gameState.ports, gameState.intersections);
-            const err = executeBankTrade(gameState, give, rate, get);
-            if (err === null) addLog(`${current.name} bank-traded ${rate} ${give} → 1 ${get}`);
+        switch (action.action) {
+          case 'roll_dice': {
+            const [d1, d2] = rollDice(gameState);
+            addLog(`${current.name} rolled ${d1 + d2}`);
+            if (aiSpeed !== 'instant') {
+              setDiceFlash({ total: d1 + d2, faces: [d1, d2] });
+              sfx.dice();
+            }
+            if (d1 + d2 === 7) {
+              let guard = 0;
+              while (gameState.phase === 'discard' && guard++ < 10) {
+                const aiInQueue = gameState.players.find(
+                  p => p.isAI && gameState.discardQueue.includes(p.color)
+                );
+                if (!aiInQueue) break;
+                const total = (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
+                  .reduce((s, r) => s + (aiInQueue.resources[r] || 0), 0);
+                const mustDiscard = Math.floor(total / 2);
+                const toDiscard: Partial<Record<ResourceType, number>> = {};
+                let remaining = mustDiscard;
+                const sorted = (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
+                  .sort((a, b) => (aiInQueue.resources[b] || 0) - (aiInQueue.resources[a] || 0));
+                for (const r of sorted) {
+                  if (remaining <= 0) break;
+                  const take = Math.min(aiInQueue.resources[r] || 0, remaining);
+                  if (take > 0) { toDiscard[r] = take; remaining -= take; }
+                }
+                discardResources(gameState, aiInQueue.color, toDiscard);
+                addLog(`${aiInQueue.name} discarded cards after the 7`);
+              }
+            }
+            break;
           }
-          break;
-        case 'play_knight':
-          addLog(`${current.name} played a Knight`);
-          break;
-        case 'play_year_of_plenty':
-          addLog(`${current.name} played Year of Plenty`);
-          break;
-        case 'play_monopoly':
-          addLog(`${current.name} played Monopoly`);
-          break;
-        case 'play_road_building':
-          addLog(`${current.name} played Road Building`);
-          break;
-        case 'end_turn':
-          endTurn(gameState);
-          addLog(`${current.name} ended turn`);
-          break;
-        case 'advance_setup':
-          // Only allow advance_setup outside forced road/settlement placement
-          advanceSetup(gameState);
-          break;
-        default:
-          break;
-      }
-      setGameState({ ...gameState });
+          case 'place_settlement':
+            if (gameState.setupPhase) {
+              const err = placeSetupSettlement(gameState, action.data.key);
+              if (err === null) {
+                advanceSetup(gameState);
+                addLog(`${current.name} placed a settlement`);
+              } else {
+                addLog(`${current.name} failed settlement: ${err}`);
+              }
+            } else {
+              const err = placeSettlement(gameState, action.data.key);
+              if (err === null) addLog(`${current.name} placed a settlement`);
+            }
+            break;
+          case 'place_road':
+            if (gameState.setupPhase) {
+              const err = placeSetupRoad(gameState, action.data.key);
+              if (err === null) {
+                advanceSetup(gameState);
+                addLog(`${current.name} placed a road`);
+              } else {
+                addLog(`${current.name} failed road: ${err}`);
+              }
+            } else {
+              const err = placeRoad(gameState, action.data.key);
+              if (err === null) addLog(`${current.name} placed a road`);
+            }
+            break;
+          case 'place_city':
+            placeCity(gameState, action.data.key);
+            addLog(`${current.name} built a city`);
+            break;
+          case 'buy_dev_card': {
+            const card = buyDevCard(gameState);
+            addLog(`${current.name} bought a development card`);
+            if (card) setDevReveal({ buyerName: current.name });
+            break;
+          }
+          case 'bank_trade':
+            {
+              const give = action.data.give as ResourceType;
+              const get = action.data.get as ResourceType;
+              const rate = getPortRate(current.color, give, gameState.ports, gameState.intersections);
+              const err = executeBankTrade(gameState, give, rate, get);
+              if (err === null) addLog(`${current.name} bank-traded ${rate} ${give} → 1 ${get}`);
+            }
+            break;
+          case 'skip_trade':
+            gameState.phase = 'build';
+            break;
+          case 'move_robber':
+            addLog(`${current.name} moved the robber`);
+            sfx.robber();
+            break;
+          case 'discard':
+            {
+              let guard = 0;
+              while (gameState.phase === 'discard' && guard++ < 10) {
+                const aiInQueue = gameState.players.find(
+                  p => p.isAI && gameState.discardQueue.includes(p.color)
+                );
+                if (!aiInQueue) break;
+                const total = (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
+                  .reduce((s, r) => s + (aiInQueue.resources[r] || 0), 0);
+                const mustDiscard = Math.floor(total / 2);
+                const toDiscard: Partial<Record<ResourceType, number>> = {};
+                let remaining = mustDiscard;
+                const sorted = (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
+                  .sort((a, b) => (aiInQueue.resources[b] || 0) - (aiInQueue.resources[a] || 0));
+                for (const r of sorted) {
+                  if (remaining <= 0) break;
+                  const take = Math.min(aiInQueue.resources[r] || 0, remaining);
+                  if (take > 0) { toDiscard[r] = take; remaining -= take; }
+                }
+                discardResources(gameState, aiInQueue.color, toDiscard);
+                addLog(`${aiInQueue.name} discarded cards after the 7`);
+              }
+            }
+            break;
+          case 'play_knight':
+            addLog(`${current.name} played a Knight`);
+            break;
+          case 'play_year_of_plenty':
+            addLog(`${current.name} played Year of Plenty`);
+            break;
+          case 'play_monopoly':
+            addLog(`${current.name} played Monopoly`);
+            break;
+          case 'play_road_building':
+            addLog(`${current.name} played Road Building`);
+            break;
+          case 'end_turn':
+            endTurn(gameState);
+            addLog(`${current.name} ended turn`);
+            break;
+          case 'advance_setup':
+            advanceSetup(gameState);
+            break;
+          default:
+            break;
+        }
+        setGameState({ ...gameState });
+      };
+      run();
     }, delay);
     return () => clearTimeout(t);
   }, [gameState, addLog, aiSpeed]);

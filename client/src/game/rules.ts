@@ -6,7 +6,7 @@ import { getTraits, loadStats, COLOR_PERSONALITY, type TraitWeights } from './pe
 
 const RESOURCES: ResourceType[] = ['brick', 'lumber', 'wool', 'grain', 'ore'];
 
-const BUILDING_COSTS: Record<string, Partial<Record<ResourceType, number>>> = {
+export const BUILDING_COSTS: Record<string, Partial<Record<ResourceType, number>>> = {
   road: { lumber: 1, brick: 1 },
   settlement: { lumber: 1, brick: 1, wool: 1, grain: 1 },
   city: { grain: 2, ore: 3 },
@@ -1090,7 +1090,7 @@ function pickFromRanked<T>(ranked: T[], level: Player['aiLevel']): T {
   return ranked[Math.floor(Math.random() * n)];
 }
 
-function settlementCandidates(state: GameState, color: PlayerColor) {
+export function settlementCandidates(state: GameState, color: PlayerColor) {
   return Object.values(state.intersections).filter(i => {
     if (i.building) return false;
     if (!canPlaceSettlement(i.key, state.intersections, state.edges)) return false;
@@ -1099,13 +1099,13 @@ function settlementCandidates(state: GameState, color: PlayerColor) {
   });
 }
 
-function cityCandidates(state: GameState, color: PlayerColor) {
+export function cityCandidates(state: GameState, color: PlayerColor) {
   return Object.values(state.intersections).filter(
     i => i.building === 'settlement' && i.owner === color,
   );
 }
 
-function roadCandidates(state: GameState, color: PlayerColor) {
+export function roadCandidates(state: GameState, color: PlayerColor) {
   return Object.values(state.edges).filter(
     e => !e.road && canPlaceRoad(e.key, color, state.edges, state.intersections),
   );
