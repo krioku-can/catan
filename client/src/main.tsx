@@ -5,7 +5,9 @@ import App from './App.tsx'
 
 import { registerCatanWorker } from './push';
 
-registerCatanWorker();
+if (!location.pathname.startsWith('/catan')) {
+  registerCatanWorker();
+}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

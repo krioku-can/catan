@@ -10,6 +10,17 @@ import { APP_VERSION } from './version';
 
 type Mode = 'home' | 'local' | 'online' | 'profile' | 'resume';
 
+function modeFromUrl(): Mode {
+  const q = new URLSearchParams(window.location.search);
+  const m = q.get('mode');
+  if (m === 'ai' || m === 'local') return 'local';
+  if (m === 'online' || m === 'table') return 'online';
+  if (m === 'profile') return 'profile';
+  if (m === 'resume') return 'resume';
+  if (q.get('room')) return 'online';
+  return 'home';
+}
+
 function OnlineShell({ onBack }: { onBack: () => void }) {
   const { gameState } = useSocket();
   if (gameState) return <OnlineGame onLeaveTable={onBack} />;
@@ -83,7 +94,7 @@ function Home({ onPick }: { onPick: (m: Mode) => void }) {
 }
 
 export default function App() {
-  const [mode, setMode] = useState<Mode>('home');
+  const [mode, setMode] = useState<Mode>(() => modeFromUrl());
   const playerName = getStored('catan_name') || 'You';
 
   if (mode === 'local') {
