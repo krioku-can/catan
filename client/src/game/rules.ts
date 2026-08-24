@@ -2,6 +2,7 @@
 
 import type { GameState, GameConfig, Player, PlayerColor, ResourceType, DevelopmentCard, HexTile, Edge } from './types';
 import { generateBoard, canPlaceSettlement, canPlaceRoad, getResourceProduction, getAdjacentIntersections, getEdgesForIntersection, getHexCorners, getPortRate } from './board';
+import { getTraits, loadStats, PERSONALITIES, COLOR_PERSONALITY, type TraitWeights } from './personality';
 
 const RESOURCES: ResourceType[] = ['brick', 'lumber', 'wool', 'grain', 'ore'];
 
@@ -85,6 +86,9 @@ export function createInitialState(config: GameConfig): GameState {
       victoryPoints: 0,
       isAI: config.aiPlayers.includes(i),
       aiLevel: config.aiLevel || 'normal',
+      personalityId: config.aiPlayers.includes(i)
+        ? (config.aiPersonalities?.[i] || COLOR_PERSONALITY[colors[i]] || 'builder')
+        : undefined,
       devCardsPlayedThisTurn: 0,
       boughtDevCardThisTurn: false,
     });
@@ -526,7 +530,7 @@ function robberPipWeight(n: number | undefined): number {
 }
 
 /** Best hex to drop the robber on: high-pip enemy tiles, prefer the leader, avoid blocking yourself. */
-export function pickRobberHex(state: GameState, mover: PlayerColor): { q: number; r: number } | null {
+export function pickRobberHex(state: GameState, mover: PlayerColor, aggression = 0.5): { q: number; r: number } | null {
   const [rq, rr] = (state.robberHex || '0,0').split(',').map(Number);
   const leader = [...state.players].sort((a, b) => (b.victoryPoints || 0) - (a.victoryPoints || 0))[0];
   const candidates: { q: number; r: number; score: number }[] = [];
@@ -550,7 +554,7 @@ export function pickRobberHex(state: GameState, mover: PlayerColor): { q: number
     if (enemy === 0) continue;
     const pips = robberPipWeight(tile.number);
     let score = enemy * pips * 10 + pips;
-    if (hitsLeader) score += 8;
+    if (hitsLeader) score += 8 + aggression * 6; // warlords press the leader harder
     score -= self * pips * 12;
     if (score > 0) candidates.push({ q: tile.q, r: tile.r, score });
   }
@@ -561,6 +565,11 @@ export function pickRobberHex(state: GameState, mover: PlayerColor): { q: number
     return any ? { q: any.q, r: any.r } : null;
   }
   candidates.sort((a, b) => b.score - a.score);
+  // Peaceful AIs occasionally take a slightly-off tile rather than always the
+  // hardest hit; warlords always go for the leader.
+  if (aggression < 0.4 && candidates.length > 1 && Math.random() < 0.3) {
+    return candidates[1];
+  }
   return candidates[0];
 }
 
@@ -1161,7 +1170,8 @@ function tryBankFor(state: GameState, player: Player, want: ResourceType): { act
 }
 
 function aiMoveRobber(state: GameState, player: Player): { action: string; data?: any } | null {
-  const best = pickRobberHex(state, player.color);
+  const traits: TraitWeights = getTraits(player.personalityId, loadStats()[player.personalityId || '']?.learned);
+  const best = pickRobberHex(state, player.color, traits.aggression);
   if (!best) {
     state.robberMovedThisTurn = true;
     state.pendingRobberMove = false;
@@ -1200,7 +1210,10 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
   const player = getCurrentPlayer(state);
   if (!player.isAI) return null;
   const level = player.aiLevel || 'normal';
+  // Personality traits for this AI (base + learned deltas from local games).
+  const traits: TraitWeights = getTraits(player.personalityId, loadStats()[player.personalityId || '']?.learned);
 
+  // Turn-order roll — AI rolls and advances to setup automatically
   if (state.phase === 'turn_order') {
     rollTurnOrder(state);
     state.phase = 'setup_settlement';
@@ -1220,6 +1233,11 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
       }
       if (candidates.length === 0) return null;
       candidates.sort((a, b) => b.score - a.score);
+      // Risk trait: gamblers take the single best spot; cautious AIs pick from
+      // a wider pool (they hedge). aiLevel still caps it.
+      if (level === 'hard' && traits.risk > 0.6) {
+        return { action: 'place_settlement', data: { key: candidates[0].key } };
+      }
       const pick = pickFromRanked(candidates, level);
       return { action: 'place_settlement', data: { key: pick.key } };
     }
@@ -1285,8 +1303,11 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
     const getsScarce = Object.keys(incoming.give || {}).some(r => scarce.includes(r as ResourceType));
     const evenOrBetter = wantTotal <= giveTotal;
     const favorable = canPay && !helpingLeader && (evenOrBetter || (givesSurplus && getsScarce));
-    respondToTrade(state, player.color, incoming.from, favorable);
-    return { action: favorable ? 'accept_trade' : 'reject_trade', data: { from: incoming.from } };
+    // Trading trait: merchants accept borderline deals; hermits hold out.
+    const tradeBias = traits.trading - 0.5; // -0.5..0.5
+    const accept = favorable || (tradeBias > 0 && Math.random() < tradeBias * 0.6);
+    respondToTrade(state, player.color, incoming.from, accept);
+    return { action: accept ? 'accept_trade' : 'reject_trade', data: { from: incoming.from } };
   }
 
   const myTable = state.tradeOffers.find(o => o.from === player.color && o.to === undefined);
@@ -1330,7 +1351,6 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
     }
     return null;
   }
-
   if (state.pendingRobberMove && !state.robberMovedThisTurn) {
     const moved = aiMoveRobber(state, player);
     if (moved) return moved;
@@ -1391,7 +1411,9 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
       const chaseArmy = player.playedKnights >= 2
         || (player.playedKnights >= 1 && (state.largestArmy.size || 0) <= 3);
       const blockLeader = leader && leader.color !== player.color && (leader.victoryPoints || 0) >= 6;
-      if (robberOnMe(state, player.color) || chaseArmy || blockLeader || level === 'hard') {
+      // Warlords + gamblers play knights more eagerly (they swing and press).
+      const eager = traits.aggression + traits.devCards > 1.1;
+      if (robberOnMe(state, player.color) || chaseArmy || blockLeader || level === 'hard' || eager) {
         const err = playKnight(state);
         if (err === null) return { action: 'play_knight' };
       }
@@ -1415,63 +1437,55 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
       state.pendingDevRoads = 0;
     }
 
+    // Build priority is personality-driven. Expansionists push settlements +
+    // roads; city-lovers upgrade; dev-card lovers buy cards; gamblers swing.
+    // Score each option by traits, then build in that order.
     const cities = cityCandidates(state, player.color)
       .map(i => ({ key: i.key, score: scoreSpot(state, i.key, player.color, false) }))
       .sort((a, b) => b.score - a.score);
-    if (player.citiesRemaining > 0 && cities.length > 0) {
-      if (canAfford(player, BUILDING_COSTS.city)) {
-        const pick = pickFromRanked(cities, level);
-        return { action: 'place_city', data: { key: pick.key } };
-      }
-      const miss = neededFor(player, BUILDING_COSTS.city);
-      if (miss.length === 1) {
-        const bank = tryBankFor(state, player, miss[0]);
-        if (bank) return bank;
-      }
-    }
-
     const setts = settlementCandidates(state, player.color)
       .map(i => ({ key: i.key, score: scoreSpot(state, i.key, player.color, false) }))
       .sort((a, b) => b.score - a.score);
-    if (player.settlementsRemaining > 0 && setts.length > 0) {
-      if (canAfford(player, BUILDING_COSTS.settlement)) {
-        const pick = pickFromRanked(setts, level);
-        return { action: 'place_settlement', data: { key: pick.key } };
-      }
-      const miss = neededFor(player, BUILDING_COSTS.settlement);
-      if (miss.length === 1) {
-        const bank = tryBankFor(state, player, miss[0]);
-        if (bank) return bank;
-      }
-    }
-
-    const deckLeft = (state.devDeck || []).length;
-    const blocked = setts.length === 0 && (player.citiesRemaining === 0 || cities.length === 0);
-    const wantArmy = player.playedKnights >= 1 && player.playedKnights < 3;
-    if (level !== 'easy' && deckLeft > 0 && canAfford(player, BUILDING_COSTS.devCard)
-      && (blocked || wantArmy || !canAfford(player, BUILDING_COSTS.city))) {
-      if (!(canAfford(player, BUILDING_COSTS.city) && cities.length > 0)
-        && !(canAfford(player, BUILDING_COSTS.settlement) && setts.length > 0)) {
-        return { action: 'buy_dev_card' };
-      }
-    }
-
     const roads = roadCandidates(state, player.color)
       .map(e => ({ key: e.key, score: scoreRoad(state, e, player.color) }))
       .sort((a, b) => b.score - a.score);
-    if (player.roadsRemaining > 0 && roads.length > 0) {
-      if (canAfford(player, BUILDING_COSTS.road)) {
-        const pick = pickFromRanked(roads, level);
-        return { action: 'place_road', data: { key: pick.key } };
+    const deckLeft = (state.devDeck || []).length;
+
+    const canCity = player.citiesRemaining > 0 && cities.length > 0 && canAfford(player, BUILDING_COSTS.city);
+    const canSett = player.settlementsRemaining > 0 && setts.length > 0 && canAfford(player, BUILDING_COSTS.settlement);
+    const canRoad = player.roadsRemaining > 0 && roads.length > 0 && canAfford(player, BUILDING_COSTS.road);
+    const canDev = level !== 'easy' && deckLeft > 0 && canAfford(player, BUILDING_COSTS.devCard);
+
+    // Score each option by personality traits.
+    const wantCity = canCity ? (1 - traits.expansion) * 1.2 + traits.risk * 0.3 : 0;
+    const wantSett = canSett ? traits.expansion * 1.2 + traits.risk * 0.2 : 0;
+    const wantDev = canDev ? traits.devCards * 1.2 + traits.risk * 0.3 : 0;
+    const wantRoad = canRoad ? traits.expansion * 0.8 : 0;
+
+    const choices: { score: number; act: () => { action: string; data?: any } }[] = [];
+    if (wantCity > 0) choices.push({ score: wantCity, act: () => ({ action: 'place_city', data: { key: pickFromRanked(cities, level).key } }) });
+    if (wantSett > 0) choices.push({ score: wantSett, act: () => ({ action: 'place_settlement', data: { key: pickFromRanked(setts, level).key } }) });
+    if (wantDev > 0) choices.push({ score: wantDev, act: () => ({ action: 'buy_dev_card' }) });
+    if (wantRoad > 0) choices.push({ score: wantRoad, act: () => ({ action: 'place_road', data: { key: pickFromRanked(roads, level).key } }) });
+
+    if (choices.length > 0) {
+      // Weighted pick: higher score = more likely, so personalities genuinely
+      // diverge instead of always following one fixed priority.
+      const total = choices.reduce((s, c) => s + c.score, 0);
+      let roll = Math.random() * total;
+      for (const c of choices) {
+        roll -= c.score;
+        if (roll <= 0) return c.act();
       }
-      const miss = neededFor(player, BUILDING_COSTS.road);
-      if (miss.length === 1) {
-        const bank = tryBankFor(state, player, miss[0]);
-        if (bank) return bank;
-      }
+      return choices[choices.length - 1].act();
     }
 
-    if (level !== 'easy' && deckLeft > 0 && canAfford(player, BUILDING_COSTS.devCard)) {
+    // Nothing affordable yet — try a targeted bank trade for a missing resource,
+    // else buy a dev card as a fallback, else end turn.
+    const blocked = setts.length === 0 && (player.citiesRemaining === 0 || cities.length === 0);
+    const wantArmy = player.playedKnights >= 1 && player.playedKnights < 3;
+    if (level !== 'easy' && deckLeft > 0 && canAfford(player, BUILDING_COSTS.devCard)
+      && (blocked || wantArmy || traits.devCards > 0.6)) {
       return { action: 'buy_dev_card' };
     }
 

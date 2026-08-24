@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { GameState, GameConfig, PlayerColor, ResourceType } from './game/types.js';
 import { createInitialState, getCurrentPlayer, getPlayerByColor, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, executeBankTrade, proposePublicTrade, respondToTrade, completeTradeWith, cancelTradeOffer, normalizePlayerDevCards, countHeldDevCards, getStealTargets, stealFrom, checkVictory, hiddenVictoryPoints } from './game/rules.js';
 import { getPortRate } from './game/board.js';
+import { PERSONALITIES, COLOR_PERSONALITY } from './game/personality.js';
 import { dropSubscription, getVapidPublicKey, notifyPlayer, saveSubscription, shouldPush, type PushSub } from './push.js';
 
 const PORT = parseInt(process.env.PORT || '3001');
@@ -62,6 +63,7 @@ interface PlayerConnection {
   isAI: boolean;
   ready: boolean;
   visible?: boolean;
+  personalityId?: string;
 }
 
 const rooms = new Map<string, Room>();
@@ -706,15 +708,16 @@ io.on('connection', (socket) => {
 
     const playerId = uuidv4();
     const color = nextColor(room);
+    const personalityId = COLOR_PERSONALITY[color] || 'builder';
     room.players.push({
       socketId: '',
       playerId,
-      name: `AI ${room.players.filter(p => p.isAI).length + 1}`,
+      name: PERSONALITIES[personalityId]?.name || `AI ${room.players.filter(p => p.isAI).length + 1}`,
       color,
       isAI: true,
       ready: true,
+      personalityId,
     });
-
     io.to(roomCode).emit('room_update', serializeRoom(room));
   });
 
@@ -746,6 +749,10 @@ io.on('connection', (socket) => {
       numPlayers: room.players.length,
       playerNames: room.players.map(p => p.name),
       aiPlayers: room.players.map((p, i) => p.isAI ? i : -1).filter(i => i >= 0),
+      aiPersonalities: room.players.reduce<Record<number, string>>((acc, p, i) => {
+        if (p.isAI && p.personalityId) acc[i] = p.personalityId;
+        return acc;
+      }, {}),
       victoryPointsToWin: room.settings?.victoryPointsToWin ?? 10,
       friendlyRobber: room.settings?.friendlyRobber ?? false,
       boardMode: room.settings?.boardMode ?? 'balanced',

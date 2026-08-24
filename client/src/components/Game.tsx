@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { GameState, GameConfig, PlayerColor, ResourceType } from '../game/types';
 import { createInitialState, getCurrentPlayer, getPlayerByColor, executeBankTrade, proposePublicTrade, respondToTrade, completeTradeWith, cancelTradeOffer, aiRespondToPublicOffers, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, countHeldDevCards, getStealTargets, stealFrom, checkVictory } from '../game/rules';
+import { getHexCorners } from '../game/board';
+import { PERSONALITIES, learnFromGame } from '../game/personality';
 import Board from './Board';
 import PlayerHand from './PlayerHand';
 import DiceRoller from './DiceRoller';
@@ -108,6 +110,22 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
       && gameState.phase !== 'discard';
     setRobberMode(mustMove);
   }, [gameState?.pendingRobberMove, gameState?.robberMovedThisTurn, gameState?.phase, gameState?.currentTurn]);
+
+  // Learning: when a local game ends, record each AI's result and nudge their
+  // weights toward the winner's profile. Only fires once per game.
+  useEffect(() => {
+    if (!gameState?.winner || statsRecordedRef.current) return;
+    statsRecordedRef.current = true;
+    const results: Record<string, { vp: number; won: boolean }> = {};
+    gameState.players.forEach(p => {
+      if (!p.isAI || !p.personalityId) return;
+      results[p.personalityId] = {
+        vp: p.victoryPoints,
+        won: p.color === gameState.winner,
+      };
+    });
+    if (Object.keys(results).length) learnFromGame(results);
+  }, [gameState?.winner]);
 
   // Auto-save the game to localStorage on every state change so a refresh
   // or accidental close never loses progress. Cleared when the game ends.
@@ -372,6 +390,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
 
     if (gameState.setupPhase) {
       if (gameState.phase === 'setup_settlement') {
+        if (!window.confirm('Place settlement on this corner?')) return;
         const err = placeSetupSettlement(gameState, key);
         if (err === null) {
           sfx.build();
@@ -386,6 +405,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
 
     if (gameState.phase === 'build' || gameState.phase === 'trade') {
       if (selectedAction === 'settlement') {
+        if (!window.confirm('Place settlement on this corner?')) return;
         const err = placeSettlement(gameState, key);
         if (err === null) {
           sfx.build();
@@ -394,6 +414,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           setGameState({ ...gameState });
         }
       } else if (selectedAction === 'city') {
+        if (!window.confirm('Upgrade this settlement to a city?')) return;
         const err = placeCity(gameState, key);
         if (err === null) {
           sfx.build();
@@ -411,6 +432,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
 
     if (gameState.setupPhase) {
       if (gameState.phase === 'setup_road') {
+        if (!window.confirm('Place road on this edge?')) return;
         const err = placeSetupRoad(gameState, key);
         if (err === null) {
           sfx.road();
@@ -426,6 +448,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     // Normal roads (selected) or free Road Building placements.
     const freeRoads = gameState.pendingDevAction === 'road_building' && gameState.pendingDevRoads > 0;
     if (freeRoads || ((gameState.phase === 'build' || gameState.phase === 'trade') && selectedAction === 'road')) {
+      if (!window.confirm(freeRoads ? 'Place free road on this edge?' : 'Build road on this edge?')) return;
       const err = placeRoad(gameState, key);
       if (err === null) {
         sfx.road();
@@ -1005,6 +1028,7 @@ function SetupScreen({
   const [friendlyRobber, setFriendlyRobber] = useState(false);
   const [boardMode, setBoardMode] = useState<'random' | 'balanced'>('balanced');
   const [aiLevel, setAiLevel] = useState<'easy' | 'normal' | 'hard'>('normal');
+  const [aiPersonalities, setAiPersonalities] = useState<Record<number, string>>({});
 
   return (
     <div className="scroll-page" style={styles.setupScreen}>
@@ -1054,6 +1078,18 @@ function SetupScreen({
                 />
                 AI
               </label>
+            )}
+            {i > 0 && aiPlayers.includes(i) && (
+              <select
+                style={styles.personalitySelect}
+                value={aiPersonalities[i] || ''}
+                onChange={e => setAiPersonalities({ ...aiPersonalities, [i]: e.target.value })}
+              >
+                <option value="">Auto</option>
+                {Object.values(PERSONALITIES).map(p => (
+                  <option key={p.id} value={p.id}>{p.emoji} {p.name}</option>
+                ))}
+              </select>
             )}
           </div>
         ))}
@@ -1148,12 +1184,13 @@ function SetupScreen({
             style={styles.startBtn}
             onClick={() => onStart({
               numPlayers,
-              playerNames: names.slice(0, numPlayers).map((n, i) => n || (i === 0 ? defaultName : `AI ${i + 1}`)),
+              playerNames: names.slice(0, numPlayers).map((n, i) => n || (i === 0 ? defaultName : (aiPersonalities[i] ? PERSONALITIES[aiPersonalities[i]].name : `AI ${i + 1}`))),
               aiPlayers,
               victoryPointsToWin,
               friendlyRobber,
               boardMode,
               aiLevel,
+              aiPersonalities,
             })}
           >
             Start Game
@@ -1337,6 +1374,10 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'rgba(20,12,6,0.7)', color: '#f5efe4', fontSize: 16,
   },
   aiCheckbox: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, color: '#c4b49a' },
+  personalitySelect: {
+    marginLeft: 8, background: '#2a1a0e', color: '#f5efe4',
+    border: '1px solid #5a4632', borderRadius: 8, padding: '4px 6px', fontSize: 12,
+  },
   setupActions: {
     position: 'sticky',
     bottom: 0,

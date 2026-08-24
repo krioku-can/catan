@@ -68,6 +68,8 @@ export interface Player {
   isAI: boolean;
   /** Difficulty for this AI player (defaults to 'normal'). */
   aiLevel?: AiLevel;
+  /** Personality id (see personality.ts). Undefined for humans. */
+  personalityId?: string;
   /** Number of dev cards played this turn (enforces 1-per-turn rule). */
   devCardsPlayedThisTurn: number;
   /** @deprecated Prefer per-card boughtThisTurn. Kept for older state. */
@@ -148,4 +150,6 @@ export interface GameConfig {
   turnTimer?: boolean;
   /** Difficulty for all AI players. Defaults to 'normal'. */
   aiLevel?: AiLevel;
+  /** Optional per-AI personality ids (index-aligned with aiPlayers). */
+  aiPersonalities?: Record<number, string>;
 }
