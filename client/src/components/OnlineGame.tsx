@@ -17,8 +17,12 @@ import TurnCoach from './TurnCoach';
 import PushToggle from './PushToggle';
 import TurnTimer from './TurnTimer';
 import DevCardReveal from './DevCardReveal';
+import TurnActionsBar from './TurnActionsBar';
 import { unlockAudio, sfx, isMuted, setMuted } from '../audio';
 import { getTurnCoach } from '../turnCoach';
+import { recordGame } from '../stats';
+import { buildRecap } from '../recap';
+import { legalHighlights } from '../highlights';
 
 const HEX_SIZE = 68;
 
@@ -38,6 +42,15 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
   const [devReveal, setDevReveal] = useState<{ type?: string | null; buyerName?: string } | null>(null);
   const lastTurnColorRef = useRef<string | null>(null);
   const lastDiceKeyRef = useRef<string>('');
+  const statsRecordedRef = useRef(false);
+  const lastAutoOpenKey = useRef('');
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<number | null>(null);
+  const flashToast = useCallback((msg: string) => {
+    setToast(msg);
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 2400);
+  }, []);
 
   useEffect(() => {
     const unlock = () => unlockAudio();
@@ -69,6 +82,39 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
   useEffect(() => {
     if (gameState?.winner) sfx.win();
   }, [gameState?.winner]);
+
+  useEffect(() => {
+    if (!gameState?.winner || statsRecordedRef.current || !room) return;
+    const myColor = room.players.find(rp => rp.playerId === playerId)?.color;
+    const recap = buildRecap(gameState, myColor);
+    statsRecordedRef.current = true;
+    recordGame({
+      players: gameState.players.length,
+      mode: 'online',
+      won: recap.won,
+      wonAs: gameState.winner,
+      victoryPoints: recap.myVp,
+      playerColor: myColor ?? 'red',
+      opponents: gameState.players.length - 1,
+      myVictoryPoints: recap.myVp,
+      scores: recap.scores,
+      longestRoad: recap.longestRoad,
+      largestArmy: recap.largestArmy,
+      tip: recap.tip,
+    });
+  }, [gameState?.winner, gameState, room, playerId]);
+
+  useEffect(() => {
+    if (!gameState || gameState.winner || !room) return;
+    const myColor = room.players.find(rp => rp.playerId === playerId)?.color;
+    const cur = getCurrentPlayer(gameState);
+    if (!myColor || cur.color !== myColor) return;
+    if (gameState.setupPhase || gameState.phase === 'discard' || gameState.phase === 'turn_order') return;
+    const key = `${cur.color}:${gameState.phase}:${gameState.currentTurn}`;
+    if (lastAutoOpenKey.current === key) return;
+    lastAutoOpenKey.current = key;
+    setShowPanel('actions');
+  }, [gameState?.currentTurn, gameState?.phase, gameState?.winner, gameState?.setupPhase, room, playerId]);
 
   // Only the current player may move the robber, and only while the server
   // says a 7/knight is still waiting. Never arm this for the whole table.
@@ -155,7 +201,16 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
 
   const handleIntersectionClick = useCallback((key: string) => {
     setOrderFlash(null);
-    if (gameState?.setupPhase && gameState.phase === 'setup_settlement') {
+    if (!gameState) return;
+    const myColor = room?.players.find(rp => rp.playerId === playerId)?.color;
+    const cur = getCurrentPlayer(gameState);
+    const mine = !!myColor && cur.color === myColor;
+    const legal = legalHighlights(gameState, myColor, selectedAction, mine);
+    if (legal.intersections.length && !legal.intersections.includes(key)) {
+      flashToast('Not a legal spot');
+      return;
+    }
+    if (gameState.setupPhase && gameState.phase === 'setup_settlement') {
       sendAction('place_settlement', { key });
       return;
     }
@@ -166,17 +221,26 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
       sendAction('place_city', { key });
       setSelectedAction(null);
     }
-  }, [selectedAction, sendAction, gameState]);
+  }, [selectedAction, sendAction, gameState, room, playerId, flashToast]);
 
   const handleEdgeClick = useCallback((key: string) => {
     setOrderFlash(null);
-    const setupRoad = !!gameState?.setupPhase && gameState.phase === 'setup_road';
-    const freeRoads = gameState?.pendingDevAction === 'road_building' && (gameState?.pendingDevRoads || 0) > 0;
+    if (!gameState) return;
+    const myColor = room?.players.find(rp => rp.playerId === playerId)?.color;
+    const cur = getCurrentPlayer(gameState);
+    const mine = !!myColor && cur.color === myColor;
+    const legal = legalHighlights(gameState, myColor, selectedAction, mine);
+    const setupRoad = !!gameState.setupPhase && gameState.phase === 'setup_road';
+    const freeRoads = gameState.pendingDevAction === 'road_building' && (gameState.pendingDevRoads || 0) > 0;
     if (setupRoad || freeRoads || selectedAction === 'road') {
+      if (legal.edges.length && !legal.edges.includes(key)) {
+        flashToast('Not a legal road');
+        return;
+      }
       sendAction('place_road', { key });
       if (!freeRoads && !setupRoad) setSelectedAction(null);
     }
-  }, [selectedAction, sendAction, gameState]);
+  }, [selectedAction, sendAction, gameState, room, playerId, flashToast]);
 
   const handleRollDice = useCallback(() => {
     sendAction('roll_dice');
@@ -261,6 +325,14 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
   });
   const player = getCurrentPlayer(gameState);
   const isMyTurn = myPlayer?.color === player.color;
+  const recap = gameState.winner ? buildRecap(gameState, myPlayer?.color) : null;
+  const highlights = legalHighlights(gameState, myPlayer?.color, selectedAction, isMyTurn);
+  const othersDiscarding = gameState.phase === 'discard'
+    ? gameState.discardQueue
+        .filter(c => c !== myPlayer?.color)
+        .map(c => gameState.players.find(pl => pl.color === c)?.name || c)
+        .filter(Boolean)
+    : [];
   const awayColors = room.players
     .filter(p => !p.isAI && p.connected === false)
     .map(p => p.color);
@@ -297,17 +369,27 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
   return (
     <div style={styles.container}>
       {leaveModal}
-      {gameState.winner && (
+      {gameState.winner && recap && (
         <div style={styles.winOverlay}>
-          <div style={styles.winCard}>
-            <div style={styles.winEmoji}>{myPlayer?.color === gameState.winner ? '🏆' : '🎲'}</div>
+          <div style={{ ...styles.winCard, maxWidth: 360, maxHeight: '85dvh', overflowY: 'auto' }}>
+            <div style={styles.winEmoji}>{recap.won ? '🏆' : '🎲'}</div>
             <h2 style={styles.winTitle}>
-              {myPlayer?.color === gameState.winner ? 'You win!' : 'Game over'}
+              {recap.won ? 'You win!' : 'Game over'}
             </h2>
             <p style={styles.winSub}>
-              {gameState.players.find(p => p.color === gameState.winner)?.name} wins with{' '}
-              {gameState.players.find(p => p.color === gameState.winner)?.victoryPoints ?? 10} VP
+              You {recap.myVp} VP · {recap.winnerName} wins with {recap.winnerVp}
+              {recap.longestRoad ? ` · Road: ${recap.longestRoad}` : ''}
+              {recap.largestArmy ? ` · Army: ${recap.largestArmy}` : ''}
             </p>
+            <div className="recap-scores">
+              {recap.scores.map(s => (
+                <div key={s.color} className={s.color === myPlayer?.color ? 'recap-row recap-row-me' : 'recap-row'}>
+                  <span>{s.name}</span>
+                  <span>{s.vp} VP</span>
+                </div>
+              ))}
+            </div>
+            <p className="recap-tip">{recap.tip}</p>
             <button
               type="button"
               style={styles.winBtn}
@@ -399,6 +481,8 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
           robberMode={robberMode}
           selectedAction={selectedAction}
           debug={debug}
+          legalIntersections={highlights.intersections}
+          legalEdges={highlights.edges}
         />
         <DiceFlash
           total={diceFlash?.total ?? null}
@@ -455,6 +539,7 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
               .reduce((s, r) => s + (myPlayer.resources[r] || 0), 0) / 2
           )}
           onDiscard={handleDiscard}
+          othersDiscarding={othersDiscarding}
         />
       )}
 
@@ -502,6 +587,20 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
           onCounter={handleCounterTrade}
         />
       )}
+
+      {toast && <div className="game-toast" role="status">{toast}</div>}
+
+      <TurnActionsBar
+        phase={gameState.phase}
+        isMyTurn={isMyTurn}
+        selectedAction={selectedAction}
+        onRoll={handleRollDice}
+        onEndTurn={handleEndTurn}
+        onClearAction={() => setSelectedAction(null)}
+        setupPhase={gameState.setupPhase}
+        robberMode={robberMode}
+        winner={!!gameState.winner}
+      />
 
       <div className="bottom-chrome">
         {showPanel && (
@@ -605,10 +704,12 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
 
         <div style={styles.tabBar}>
           <button
+            type="button"
+            className={isMyTurn && !gameState.winner && showPanel !== 'actions' && !gameState.setupPhase ? 'tab-need-action' : undefined}
             style={{ ...styles.tab, ...(showPanel === 'actions' ? styles.tabActive : {}) }}
             onClick={() => setShowPanel(showPanel === 'actions' ? null : 'actions')}
           >
-            Actions
+            {gameState.phase === 'roll' && isMyTurn ? 'Roll' : 'Actions'}
           </button>
           <button
             style={{ ...styles.tab, ...(showPanel === 'hand' ? styles.tabActive : {}) }}

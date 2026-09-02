@@ -17,7 +17,10 @@ import DiscardModal from './DiscardModal';
 import DevCardPanel from './DevCardPanel';
 import TurnCoach from './TurnCoach';
 import DevCardReveal from './DevCardReveal';
+import TurnActionsBar from './TurnActionsBar';
 import { recordGame } from '../stats';
+import { buildRecap } from '../recap';
+import { legalHighlights } from '../highlights';
 import { getPortRate } from '../game/board';
 import { setStored, getStored } from '../storage';
 import { unlockAudio, sfx, isMuted, setMuted } from '../audio';
@@ -71,7 +74,16 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
   const [aiSpeed, setAiSpeedState] = useState<AiSpeed>(() => loadAiSpeed());
   const startedRef = useRef(false);
   const statsRecordedRef = useRef(false);
+  const learnedRef = useRef(false);
   const lastTurnColorRef = useRef<string | null>(null);
+  const lastAutoOpenKey = useRef('');
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<number | null>(null);
+  const flashToast = useCallback((msg: string) => {
+    setToast(msg);
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 2400);
+  }, []);
 
   const setAiSpeed = useCallback((s: AiSpeed) => {
     setAiSpeedState(s);
@@ -114,8 +126,8 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
   // Learning: when a local game ends, record each AI's result and nudge their
   // weights toward the winner's profile. Only fires once per game.
   useEffect(() => {
-    if (!gameState?.winner || statsRecordedRef.current) return;
-    statsRecordedRef.current = true;
+    if (!gameState?.winner || learnedRef.current) return;
+    learnedRef.current = true;
     const results: Record<string, { vp: number; won: boolean }> = {};
     gameState.players.forEach(p => {
       if (!p.isAI || !p.personalityId) return;
@@ -151,6 +163,8 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
   const startGame = useCallback((c: GameConfig) => {
     const state = createInitialState(c);
     _setConfig(c);
+    statsRecordedRef.current = false;
+    learnedRef.current = false;
     setGameState(state);
     setShowSetup(false);
     addLog(`Game started! ${c.playerNames.join(' vs ')} · ${state.victoryPointsToWin} VP${state.friendlyRobber ? ' · Friendly Robber' : ''}`);
@@ -391,7 +405,6 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
 
     if (gameState.setupPhase) {
       if (gameState.phase === 'setup_settlement') {
-        if (!window.confirm('Place settlement on this corner?')) return;
         const err = placeSetupSettlement(gameState, key);
         if (err === null) {
           sfx.build();
@@ -399,6 +412,8 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           setGameState({ ...gameState });
           advanceSetup(gameState);
           setGameState({ ...gameState });
+        } else {
+          flashToast(err);
         }
       }
       return;
@@ -406,26 +421,28 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
 
     if (gameState.phase === 'build' || gameState.phase === 'trade') {
       if (selectedAction === 'settlement') {
-        if (!window.confirm('Place settlement on this corner?')) return;
         const err = placeSettlement(gameState, key);
         if (err === null) {
           sfx.build();
           addLog(`${player.name} built a settlement`);
           setSelectedAction(null);
           setGameState({ ...gameState });
+        } else {
+          flashToast(err);
         }
       } else if (selectedAction === 'city') {
-        if (!window.confirm('Upgrade this settlement to a city?')) return;
         const err = placeCity(gameState, key);
         if (err === null) {
           sfx.build();
           addLog(`${player.name} upgraded to a city`);
           setSelectedAction(null);
           setGameState({ ...gameState });
+        } else {
+          flashToast(err);
         }
       }
     }
-  }, [gameState, selectedAction, addLog]);
+  }, [gameState, selectedAction, addLog, flashToast]);
 
   const handleEdgeClick = useCallback((key: string) => {
     if (!gameState) return;
@@ -433,7 +450,6 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
 
     if (gameState.setupPhase) {
       if (gameState.phase === 'setup_road') {
-        if (!window.confirm('Place road on this edge?')) return;
         const err = placeSetupRoad(gameState, key);
         if (err === null) {
           sfx.road();
@@ -441,6 +457,8 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           setGameState({ ...gameState });
           advanceSetup(gameState);
           setGameState({ ...gameState });
+        } else {
+          flashToast(err);
         }
       }
       return;
@@ -449,7 +467,6 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     // Normal roads (selected) or free Road Building placements.
     const freeRoads = gameState.pendingDevAction === 'road_building' && gameState.pendingDevRoads > 0;
     if (freeRoads || ((gameState.phase === 'build' || gameState.phase === 'trade') && selectedAction === 'road')) {
-      if (!window.confirm(freeRoads ? 'Place free road on this edge?' : 'Build road on this edge?')) return;
       const err = placeRoad(gameState, key);
       if (err === null) {
         sfx.road();
@@ -458,9 +475,11 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           : `${player.name} built a road`);
         if (!freeRoads) setSelectedAction(null);
         setGameState({ ...gameState });
+      } else {
+        flashToast(err);
       }
     }
-  }, [gameState, selectedAction, addLog]);
+  }, [gameState, selectedAction, addLog, flashToast]);
 
   const handleTurnOrder = useCallback(() => {
     if (!gameState) return;
@@ -615,6 +634,19 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     setGameState({ ...gameState });
   }, [gameState, pendingSteal, addLog]);
 
+
+  // Auto-open the Actions sheet when it becomes your turn / a new phase.
+  useEffect(() => {
+    if (!gameState || gameState.winner) return;
+    const cur = getCurrentPlayer(gameState);
+    if (cur.isAI) return;
+    if (gameState.setupPhase || gameState.phase === 'discard' || gameState.phase === 'turn_order') return;
+    const key = `${cur.color}:${gameState.phase}:${gameState.currentTurn}`;
+    if (lastAutoOpenKey.current === key) return;
+    lastAutoOpenKey.current = key;
+    setShowPanel('actions');
+  }, [gameState?.currentTurn, gameState?.phase, gameState?.winner, gameState?.setupPhase]);
+
   // Record result once when the game ends
   useEffect(() => {
     if (!gameState || !gameState.winner || statsRecordedRef.current) return;
@@ -623,14 +655,20 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     const won = myPlayer?.color === winnerColor;
     const winner = gameState.players.find(p => p.color === winnerColor);
     statsRecordedRef.current = true;
+    const recap = buildRecap(gameState, myPlayer?.color);
     recordGame({
       players: gameState.players.length,
       mode: 'ai',
       won,
       wonAs: winnerColor,
-      victoryPoints: winner?.victoryPoints ?? 0,
+      victoryPoints: recap.myVp,
       playerColor: myPlayer?.color ?? 'red',
       opponents: gameState.players.length - 1,
+      myVictoryPoints: recap.myVp,
+      scores: recap.scores,
+      longestRoad: recap.longestRoad,
+      largestArmy: recap.largestArmy,
+      tip: recap.tip,
     });
     addLog(`🎉 ${winner?.name ?? 'Player'} wins with ${winner?.victoryPoints ?? 10} points!`);
   }, [gameState, addLog]);
@@ -658,6 +696,14 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
   const player = getCurrentPlayer(gameState);
   const isMyTurn = !player.isAI;
   const me = gameState.players.find(p => !p.isAI) || gameState.players[0];
+  const recap = gameState.winner ? buildRecap(gameState, me.color) : null;
+  const highlights = legalHighlights(gameState, me.color, selectedAction, isMyTurn);
+  const othersDiscarding = gameState.phase === 'discard'
+    ? gameState.discardQueue
+        .filter(c => c !== me.color)
+        .map(c => gameState.players.find(p => p.color === c)?.name || c)
+        .filter(Boolean)
+    : [];
 
   return (
     <div style={styles.mobileContainer}>
@@ -694,17 +740,27 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           )}
         </div>
       )}
-      {gameState.winner && (
+      {gameState.winner && recap && (
         <div style={styles.winOverlay}>
-          <div style={styles.winCard}>
-            <div style={styles.winEmoji}>{me.color === gameState.winner ? '🏆' : '🤖'}</div>
+          <div style={{ ...styles.winCard, maxWidth: 360 }}>
+            <div style={styles.winEmoji}>{recap.won ? '🏆' : '🤖'}</div>
             <h2 style={styles.winTitle}>
-              {me.color === gameState.winner ? 'You Win!' : 'Better Luck Next Time'}
+              {recap.won ? 'You Win!' : 'Better Luck Next Time'}
             </h2>
             <p style={styles.winSub}>
-              {gameState.players.find(p => p.color === gameState.winner)?.name} wins with{' '}
-              {gameState.players.find(p => p.color === gameState.winner)?.victoryPoints ?? 10} points
+              You {recap.myVp} VP · {recap.winnerName} wins with {recap.winnerVp}
+              {recap.longestRoad ? ` · Road: ${recap.longestRoad}` : ''}
+              {recap.largestArmy ? ` · Army: ${recap.largestArmy}` : ''}
             </p>
+            <div className="recap-scores">
+              {recap.scores.map(s => (
+                <div key={s.color} className={s.color === me.color ? 'recap-row recap-row-me' : 'recap-row'}>
+                  <span>{s.name}</span>
+                  <span>{s.vp} VP</span>
+                </div>
+              ))}
+            </div>
+            <p className="recap-tip">{recap.tip}</p>
             <button style={styles.winBtn} onClick={onExit}>Play Again</button>
           </div>
         </div>
@@ -761,6 +817,8 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           robberMode={robberMode}
           selectedAction={selectedAction}
           debug={debug}
+          legalIntersections={highlights.intersections}
+          legalEdges={highlights.edges}
         />
         <DiceFlash
           total={diceFlash?.total ?? null}
@@ -798,6 +856,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
               .reduce((s, r) => s + (me.resources[r] || 0), 0) / 2
           )}
           onDiscard={handleDiscard}
+          othersDiscarding={othersDiscarding}
         />
       )}
 
@@ -853,6 +912,21 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           }}
         />
       )}
+
+      {toast && <div className="game-toast" role="status">{toast}</div>}
+
+      <TurnActionsBar
+        phase={gameState.phase}
+        isMyTurn={isMyTurn}
+        selectedAction={selectedAction}
+        onRoll={handleRollDice}
+        onEndTurn={handleEndTurn}
+        onClearAction={() => setSelectedAction(null)}
+        rolling={diceRolling}
+        setupPhase={gameState.setupPhase}
+        robberMode={robberMode}
+        winner={!!gameState.winner}
+      />
 
       <div className="bottom-chrome">
         {showPanel && (
@@ -984,10 +1058,11 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
         <div style={styles.tabBar}>
           <button
             type="button"
+            className={isMyTurn && !gameState.winner && showPanel !== 'actions' && !gameState.setupPhase ? 'tab-need-action' : undefined}
             style={{ ...styles.tab, ...(showPanel === 'actions' ? styles.tabActive : {}) }}
             onClick={() => setShowPanel(showPanel === 'actions' ? null : 'actions')}
           >
-            🎮 Actions
+            🎮 {gameState.phase === 'roll' && isMyTurn ? 'Roll' : 'Actions'}
           </button>
           <button
             type="button"
@@ -1238,8 +1313,10 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 16,
     padding: '32px 28px',
     textAlign: 'center',
-    width: '85%',
-    maxWidth: 320,
+    width: '90%',
+    maxWidth: 380,
+    maxHeight: '85dvh',
+    overflowY: 'auto',
   },
   winEmoji: {
     fontSize: 56,
