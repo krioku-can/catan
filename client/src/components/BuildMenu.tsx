@@ -1,4 +1,5 @@
 import type { Player, TurnPhase } from '../game/types';
+import { BUILDING_COSTS, canAfford } from '../game/rules';
 
 interface BuildMenuProps {
   player: Player;
@@ -14,10 +15,10 @@ interface BuildMenuProps {
 }
 
 const BUILD_OPTIONS = [
-  { id: 'road', label: '🛣️', name: 'Road', cost: '🪵🧱' },
-  { id: 'settlement', label: '🏘️', name: 'Settlement', cost: '🪵🧱🐑🌾' },
-  { id: 'city', label: '🏙️', name: 'City', cost: '🌾🌾⛏️⛏️⛏️' },
-  { id: 'devcard', label: '📜', name: 'Dev Card', cost: '🐑🌾⛏️' },
+  { id: 'road', label: '🛣️', name: 'Road', cost: '🪵🧱', costKey: 'road' as const },
+  { id: 'settlement', label: '🏘️', name: 'Settlement', cost: '🪵🧱🐑🌾', costKey: 'settlement' as const },
+  { id: 'city', label: '🏙️', name: 'City', cost: '🌾🌾⛏️⛏️⛏️', costKey: 'city' as const },
+  { id: 'devcard', label: '📜', name: 'Dev Card', cost: '🐑🌾⛏️', costKey: 'devCard' as const },
 ];
 
 export default function BuildMenu({
@@ -63,6 +64,7 @@ export default function BuildMenu({
           {BUILD_OPTIONS.map(opt => {
             const isSelected = selectedAction === opt.id;
             const isDevCard = opt.id === 'devcard';
+            const affordable = canAfford(player, BUILDING_COSTS[opt.costKey] || {});
             return (
               <button
                 key={opt.id}
@@ -70,6 +72,8 @@ export default function BuildMenu({
                   ...styles.buildBtn,
                   ...(isSelected ? styles.buildBtnSelected : {}),
                   ...(!isMyTurn ? styles.buildBtnDisabled : {}),
+                  ...(isMyTurn && !affordable && !isSelected ? styles.buildBtnUnaffordable : {}),
+                  ...(isMyTurn && affordable && !isSelected ? styles.buildBtnReady : {}),
                 }}
                 onClick={() => {
                   if (!isMyTurn) return;
@@ -82,8 +86,8 @@ export default function BuildMenu({
                 disabled={!isMyTurn}
               >
                 <div style={styles.btnIcon}>{opt.label}</div>
-                <div style={styles.btnName}>{opt.name}</div>
-                <div style={styles.btnCost}>{opt.cost}</div>
+                <div style={styles.btnName}>{opt.name}{isSelected ? ' · tap board' : ''}</div>
+                <div style={styles.btnCost}>{opt.cost}{isMyTurn && affordable ? ' · ready' : ''}</div>
               </button>
             );
           })}
@@ -147,12 +151,18 @@ const styles: Record<string, React.CSSProperties> = {
   },
   buildBtnSelected: {
     borderColor: '#ffd700',
-    background: '#16213e',
-    boxShadow: '0 0 8px rgba(255,215,0,0.3)',
+    background: '#2a3a1a',
+    boxShadow: '0 0 0 2px #ffd700, 0 0 12px rgba(255,215,0,0.45)',
   },
   buildBtnDisabled: {
     opacity: 0.3,
     cursor: 'not-allowed',
+  },
+  buildBtnUnaffordable: {
+    opacity: 0.45,
+  },
+  buildBtnReady: {
+    borderColor: 'rgba(46,204,113,0.55)',
   },
   btnIcon: {
     fontSize: 22,

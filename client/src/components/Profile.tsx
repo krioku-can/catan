@@ -87,9 +87,15 @@ export default function Profile({ onBack }: { onBack?: () => void }) {
                 <span style={styles.historyMode}>
                   {rec.mode === 'ai' ? 'vs AI' : 'Online'} · {rec.players} players
                 </span>
-                {rec.victoryPoints > 0 && (
-                  <span style={styles.historyPts}>🏆 {rec.victoryPoints} pts</span>
-                )}
+                <span style={styles.historyPts}>
+                  You {rec.myVictoryPoints ?? rec.victoryPoints} VP
+                  {rec.scores && rec.scores.length > 0
+                    ? ` · ${rec.scores.map(s => `${s.name} ${s.vp}`).join(', ')}`
+                    : rec.victoryPoints > 0 && rec.myVictoryPoints == null
+                      ? ` · winner ${rec.victoryPoints}`
+                      : ''}
+                </span>
+                {rec.tip && <span style={styles.historyTip}>{rec.tip}</span>}
               </div>
             </div>
           ))}
@@ -276,6 +282,16 @@ const styles: Record<string, React.CSSProperties> = {
   historyPts: {
     fontSize: 12,
     color: '#ffd700',
+    textAlign: 'right',
+    maxWidth: 220,
+  },
+  historyTip: {
+    fontSize: 11,
+    color: '#a8d5a8',
+    textAlign: 'right',
+    maxWidth: 220,
+    lineHeight: 1.3,
+    marginTop: 2,
   },
   backBtn: {
     padding: '14px',

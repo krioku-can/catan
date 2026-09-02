@@ -61,6 +61,8 @@ interface BoardProps {
   robberMode: boolean;
   selectedAction: string | null;
   debug?: boolean;
+  legalIntersections?: string[];
+  legalEdges?: string[];
 }
 
 /* ─── Geometry helpers ─────────────────────────────────────────────── */
@@ -875,10 +877,14 @@ function drawNumberToken(ctx: CanvasRenderingContext2D, cx: number, cy: number, 
   ctx.stroke();
 
   const isHot = num === 6 || num === 8;
-  ctx.fillStyle = isHot ? '#c62828' : '#1a1a1a';
-  ctx.font = `bold ${size * 0.36}px Georgia, 'Times New Roman', serif`;
+  ctx.font = `bold ${size * 0.42}px Georgia, 'Times New Roman', serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+  ctx.lineWidth = Math.max(2.5, size * 0.05);
+  ctx.strokeText(String(num), cx, cy - r * 0.1);
+  ctx.fillStyle = isHot ? '#b71c1c' : '#111';
   ctx.fillText(String(num), cx, cy - r * 0.1);
 
   const pips = num <= 7 ? num - 1 : 13 - num;
@@ -1524,7 +1530,13 @@ export default function Board({
   robberMode,
   selectedAction,
   debug = false,
+  legalIntersections,
+  legalEdges,
 }: BoardProps) {
+  const legalI = legalIntersections || [];
+  const legalE = legalEdges || [];
+  const legalIKey = legalI.join('|');
+  const legalEKey = legalE.join('|');
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
@@ -1661,9 +1673,7 @@ export default function Board({
       if (!a || !b) return;
       const ax = a.x + W / 2, ay = a.y + H / 2;
       const bx = b.x + W / 2, by = b.y + H / 2;
-      const placingRoad = gameState.setupPhase
-        ? gameState.phase === 'setup_road'
-        : gameState.phase === 'build' && selectedAction === 'road';
+      const placingRoad = legalE.includes(edge.key);
       if (!edge.road && placingRoad) {
         ctx.save();
         ctx.strokeStyle = 'rgba(255,255,255,0.5)';
@@ -1692,13 +1702,13 @@ export default function Board({
         drawCity(ctx, cx, cy, PLAYER_COLORS[inter.owner || ''] || '#666', hexSize);
       } else if (inter.building === 'settlement') {
         drawSettlement(ctx, cx, cy, PLAYER_COLORS[inter.owner || ''] || '#666', hexSize);
-      } else if (selectedAction === 'settlement' || selectedAction === 'city' || gameState.setupPhase) {
+      } else if (legalI.includes(inter.key)) {
         ctx.beginPath();
-        ctx.arc(cx, cy, Math.max(4, hexSize * 0.09), 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255,255,255,0.4)';
+        ctx.arc(cx, cy, Math.max(6, hexSize * 0.12), 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255, 236, 150, 0.55)';
         ctx.fill();
-        ctx.strokeStyle = 'rgba(255,255,255,0.7)';
-        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = '#ffd54f';
+        ctx.lineWidth = 2.2;
         ctx.stroke();
       }
     });
@@ -1784,7 +1794,7 @@ export default function Board({
     // End board translate — tray sits on wood to the left of the island
     ctx.restore();
     drawPieceTray(ctx, gameState.players, hexSize, H);
-  }, [gameState, hexSize, CANVAS_W, CANVAS_H, BOARD_OX, selectedAction, assetsReady, debug, robberMode]);
+  }, [gameState, hexSize, CANVAS_W, CANVAS_H, BOARD_OX, selectedAction, assetsReady, debug, robberMode, legalIKey, legalEKey]);
 
   const screenToCanvas = useCallback((screenX: number, screenY: number) => {
     const container = containerRef.current;

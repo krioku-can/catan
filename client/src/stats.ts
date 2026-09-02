@@ -1,6 +1,12 @@
 // Player stats persistence — track game history, wins, and performance.
 import { getStored, setStored } from './storage';
 
+export interface GameStanding {
+  name: string;
+  color: string;
+  vp: number;
+}
+
 export interface GameRecord {
   id: string;
   date: string;          // ISO
@@ -8,9 +14,14 @@ export interface GameRecord {
   mode: 'ai' | 'online';
   won: boolean;
   wonAs: string;         // color
-  victoryPoints: number;
+  victoryPoints: number; // your VP (legacy records may store winner VP)
   playerColor: string;
   opponents: number;
+  myVictoryPoints?: number;
+  scores?: GameStanding[];
+  longestRoad?: string;
+  largestArmy?: string;
+  tip?: string;
 }
 
 export interface ProfileStats {
