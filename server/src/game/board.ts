@@ -374,15 +374,21 @@ export function canPlaceRoad(
 
   if (from?.owner === color || to?.owner === color) return true;
 
-  // Check if connected to existing road
-  const fromEdges = getEdgesForIntersection(edge.from, edges);
-  const toEdges = getEdgesForIntersection(edge.to, edges);
-  
-  for (const e of fromEdges) {
-    if (e.road === color && e.key !== edgeKey) return true;
+  // Check if connected to existing road (cannot extend through an opponent's settlement/city)
+  const fromBlocked = !!from?.owner && from.owner !== color;
+  const toBlocked = !!to?.owner && to.owner !== color;
+
+  if (!fromBlocked) {
+    const fromEdges = getEdgesForIntersection(edge.from, edges);
+    for (const e of fromEdges) {
+      if (e.road === color && e.key !== edgeKey) return true;
+    }
   }
-  for (const e of toEdges) {
-    if (e.road === color && e.key !== edgeKey) return true;
+  if (!toBlocked) {
+    const toEdges = getEdgesForIntersection(edge.to, edges);
+    for (const e of toEdges) {
+      if (e.road === color && e.key !== edgeKey) return true;
+    }
   }
 
   return false;

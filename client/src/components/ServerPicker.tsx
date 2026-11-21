@@ -1,9 +1,23 @@
 import { useState } from 'react';
-import { getServerChoice, getServerUrl, isLanServer, setServerChoice, type ServerChoice } from '../serverUrl';
+import { getServerChoice, getServerUrl, isLanServer, isPackagedApp, setServerChoice, type ServerChoice } from '../serverUrl';
 
 export default function ServerPicker() {
   const [choice, setChoice] = useState<ServerChoice>(() => getServerChoice());
   const [url, setUrl] = useState(() => getServerUrl());
+
+  if (isPackagedApp()) {
+    return (
+      <div style={styles.wrap}>
+        <div style={styles.badge}>
+          ☁️ Online server ready
+          <span style={styles.dot} />
+        </div>
+        <div style={styles.hint}>
+          Play vs AI works offline · Play with Family connects automatically.
+        </div>
+      </div>
+    );
+  }
 
   const pick = (c: ServerChoice) => {
     setServerChoice(c);
@@ -62,10 +76,11 @@ const styles: Record<string, React.CSSProperties> = {
   dot: { width: 8, height: 8, borderRadius: '50%', background: '#34d399' },
   row: { display: 'flex', gap: 6 },
   btn: {
-    flex: 1, padding: '8px 10px', border: '1px solid rgba(200,150,70,0.3)',
+    flex: 1, padding: '8px 6px', border: '1px solid rgba(200,150,70,0.3)',
     borderRadius: 6, background: 'rgba(20,12,6,0.7)', color: '#f5efe4',
-    fontSize: 13, fontWeight: 700, cursor: 'pointer',
+    fontSize: 12, fontWeight: 700, cursor: 'pointer',
   },
   btnActive: { borderColor: '#ffd700', color: '#ffd700', background: 'rgba(60,36,18,0.9)' },
   hint: { fontSize: 11, color: '#8a7355', lineHeight: 1.4 },
+  url: { fontSize: 10, color: '#6e5a40', fontFamily: 'monospace', wordBreak: 'break-all' },
 };

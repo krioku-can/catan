@@ -7,7 +7,8 @@ export default function PushToggle({ playerId }: { playerId: string | null }) {
   const [hint, setHint] = useState('');
 
   useEffect(() => {
-    setOn(pushPrefOn() && Notification.permission === 'granted');
+    const granted = typeof Notification !== 'undefined' && Notification.permission === 'granted';
+    setOn(pushPrefOn() && granted);
     if (isIOS() && !isStandalone()) {
       setHint('iPhone: Add to Home Screen first, then turn this on.');
     } else if (!pushSupported()) {
@@ -15,7 +16,7 @@ export default function PushToggle({ playerId }: { playerId: string | null }) {
     }
   }, []);
 
-  if (!playerId) return null;
+  if (!playerId || (!pushSupported() && !(isIOS() && !isStandalone()))) return null;
 
   const toggle = async () => {
     if (busy) return;

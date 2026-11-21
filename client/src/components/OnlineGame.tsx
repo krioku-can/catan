@@ -19,6 +19,7 @@ import TurnTimer from './TurnTimer';
 import DevCardReveal from './DevCardReveal';
 import { unlockAudio, sfx, isMuted, setMuted } from '../audio';
 import { getTurnCoach } from '../turnCoach';
+import { recordGame } from '../stats';
 
 const HEX_SIZE = 68;
 
@@ -28,6 +29,7 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
   const [robberMode, setRobberMode] = useState(false);
   const [stealTargets, setStealTargets] = useState<PlayerColor[]>([]);
   const [pendingSteal, setPendingSteal] = useState<{ q: number; r: number } | null>(null);
+  const [stealToast, setStealToast] = useState<string | null>(null);
   const [chatInput, setChatInput] = useState('');
   const [showPanel, setShowPanel] = useState<'actions' | 'hand' | 'chat' | null>(null);
   const [diceFlash, setDiceFlash] = useState<{ total: number; faces: [number, number] } | null>(null);
@@ -38,6 +40,7 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
   const [devReveal, setDevReveal] = useState<{ type?: string | null; buyerName?: string } | null>(null);
   const lastTurnColorRef = useRef<string | null>(null);
   const lastDiceKeyRef = useRef<string>('');
+  const statsRecordedRef = useRef(false);
 
   useEffect(() => {
     const unlock = () => unlockAudio();
@@ -67,8 +70,22 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
   }, [gameState?.currentTurn, gameState?.phase, room, playerId]);
 
   useEffect(() => {
-    if (gameState?.winner) sfx.win();
-  }, [gameState?.winner]);
+    if (!gameState?.winner) return;
+    sfx.win();
+    if (statsRecordedRef.current) return;
+    statsRecordedRef.current = true;
+    const myColor = room?.players.find(rp => rp.playerId === playerId)?.color;
+    const winner = gameState.players.find(p => p.color === gameState.winner);
+    recordGame({
+      players: gameState.players.length,
+      mode: 'online',
+      won: !!myColor && myColor === gameState.winner,
+      wonAs: gameState.winner,
+      victoryPoints: winner?.victoryPoints ?? 0,
+      playerColor: myColor ?? 'red',
+      opponents: gameState.players.length - 1,
+    });
+  }, [gameState?.winner, gameState?.players, room, playerId]);
 
   // Only the current player may move the robber, and only while the server
   // says a 7/knight is still waiting. Never arm this for the whole table.
@@ -85,6 +102,7 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
       && mine
       && gameState.phase !== 'discard';
     setRobberMode(mustMove);
+    if (mustMove) setShowPanel(null);
   }, [gameState?.pendingRobberMove, gameState?.robberMovedThisTurn, gameState?.phase, gameState?.currentTurn, room, playerId]);
 
   useEffect(() => {
@@ -104,6 +122,9 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
       sfx.steal();
       setStealTargets([]);
       setPendingSteal(null);
+      if (lastActionResult.result?.resource) {
+        setStealToast(`You stole ${lastActionResult.result.resource}!`);
+      }
     }
     if (lastActionResult?.action === 'discard') sfx.discard();
     if (lastActionResult?.action === 'place_settlement' || lastActionResult?.action === 'place_city') sfx.build();
@@ -125,6 +146,12 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
       }
     }
   }, [lastActionResult]);
+
+  useEffect(() => {
+    if (!stealToast) return;
+    const t = window.setTimeout(() => setStealToast(null), 2600);
+    return () => window.clearTimeout(t);
+  }, [stealToast]);
 
   useEffect(() => {
     if (lastActionResult?.action !== 'roll_turn_order') return;
@@ -398,6 +425,7 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
           onEdgeClick={handleEdgeClick}
           robberMode={robberMode}
           selectedAction={selectedAction}
+          isMyTurn={isMyTurn}
           debug={debug}
         />
         <DiceFlash
@@ -487,9 +515,9 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
         </div>
       )}
 
-      {lastActionResult?.action === 'steal' && lastActionResult.result?.resource && (
+      {stealToast && (
         <div style={styles.stealToast}>
-          You stole {lastActionResult.result.resource}!
+          {stealToast}
         </div>
       )}
 
@@ -514,24 +542,29 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
                     <DiceRoller
                       onRoll={handleRollDice}
                       rolling={false}
-                      disabled={gameState.phase !== 'roll' || !isMyTurn}
+                      disabled={gameState.phase !== 'roll' || !isMyTurn || robberMode || !!(pendingSteal && stealTargets.length > 0)}
                       result={gameState.dice}
                     />
                     <BuildMenu
-                      player={player}
+                      player={myPlayer || player}
                       phase={gameState.phase}
                       isMyTurn={isMyTurn}
                       selectedAction={selectedAction}
-                      onSelectAction={setSelectedAction}
+                      onSelectAction={(act) => {
+                        setSelectedAction(act);
+                        if (act) setShowPanel(null);
+                      }}
                       onBuyDevCard={handleBuyDevCard}
                       onPlayKnight={handlePlayKnight}
                       onEndTurn={handleEndTurn}
-                      hasKnight={player.devCards.some(c => c.type === 'knight' && !c.played && !c.boughtThisTurn)}
+                      hasKnight={(myPlayer || player).devCards.some(c => c.type === 'knight' && !c.played && !c.boughtThisTurn)}
                       pendingFreeRoads={isMyTurn ? gameState.pendingDevRoads : 0}
+                      robberPending={robberMode || !!(pendingSteal && stealTargets.length > 0)}
+                      devDeckCount={(gameState.devDeck || []).length}
                     />
                     <TradePanel
                       gameState={gameState}
-                      isMyTurn={isMyTurn}
+                      isMyTurn={isMyTurn && !robberMode && !(pendingSteal && stealTargets.length > 0)}
                       phase={gameState.phase}
                       onBankTrade={handleBankTrade}
                       onProposeTrade={handleProposeTrade}
@@ -541,13 +574,17 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
                     <DevCardPanel
                       player={myPlayer || player}
                       phase={gameState.phase}
-                      isMyTurn={isMyTurn}
+                      isMyTurn={isMyTurn && !robberMode && !(pendingSteal && stealTargets.length > 0)}
                       onPlayKnight={handlePlayKnight}
-                      onPlayRoadBuilding={handlePlayRoadBuilding}
+                      onPlayRoadBuilding={() => {
+                        handlePlayRoadBuilding();
+                        setSelectedAction('road');
+                        setShowPanel(null);
+                      }}
                       onPlayYearOfPlenty={handlePlayYearOfPlenty}
                       onPlayMonopoly={handlePlayMonopoly}
                     />
-                    {gameState.phase === 'trade' && isMyTurn && (
+                    {gameState.phase === 'trade' && isMyTurn && !robberMode && !(pendingSteal && stealTargets.length > 0) && (
                       <button style={styles.doneTradingBtn} onClick={handleSkipTrade}>
                         Done Trading
                       </button>

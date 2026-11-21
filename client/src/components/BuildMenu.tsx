@@ -1,4 +1,5 @@
 import type { Player, TurnPhase } from '../game/types';
+import { BUILDING_COSTS, canAfford } from '../game/rules';
 
 interface BuildMenuProps {
   player: Player;
@@ -11,6 +12,8 @@ interface BuildMenuProps {
   onEndTurn: () => void;
   hasKnight: boolean;
   pendingFreeRoads?: number;
+  robberPending?: boolean;
+  devDeckCount?: number;
 }
 
 const BUILD_OPTIONS = [
@@ -31,17 +34,44 @@ export default function BuildMenu({
   onEndTurn,
   hasKnight,
   pendingFreeRoads = 0,
+  robberPending = false,
+  devDeckCount = 25,
 }: BuildMenuProps) {
   // Show during active turn phases. Before roll: only knight shortcut + wait message.
   if (phase !== 'roll' && phase !== 'build' && phase !== 'trade') return null;
 
   const canBuild = phase === 'build' || phase === 'trade';
-  const playableKnight = hasKnight && player.devCards.some(c => c.type === 'knight' && !c.played && !c.boughtThisTurn)
+  const playableKnight = !robberPending
+    && hasKnight
+    && player.devCards.some(c => c.type === 'knight' && !c.played && !c.boughtThisTurn)
     && player.devCardsPlayedThisTurn < 1;
+
+  const optionEnabled = (id: string) => {
+    if (!isMyTurn || robberPending) return false;
+    if (id === 'road') {
+      return player.roadsRemaining > 0 && (pendingFreeRoads > 0 || canAfford(player, BUILDING_COSTS.road));
+    }
+    if (id === 'settlement') {
+      return player.settlementsRemaining > 0 && canAfford(player, BUILDING_COSTS.settlement);
+    }
+    if (id === 'city') {
+      return player.citiesRemaining > 0 && canAfford(player, BUILDING_COSTS.city);
+    }
+    if (id === 'devcard') {
+      return devDeckCount > 0 && canAfford(player, BUILDING_COSTS.devCard);
+    }
+    return false;
+  };
 
   return (
     <div style={styles.container}>
-      {phase === 'roll' && isMyTurn && (
+      {robberPending && isMyTurn && (
+        <div style={styles.preRollNote}>
+          🦹 Move the robber on the board first before trading, building, or ending your turn.
+        </div>
+      )}
+
+      {!robberPending && phase === 'roll' && isMyTurn && (
         <div style={styles.preRollNote}>
           Roll the dice to collect resources. You can play a development card first.
           {pendingFreeRoads > 0 && (
@@ -63,23 +93,25 @@ export default function BuildMenu({
           {BUILD_OPTIONS.map(opt => {
             const isSelected = selectedAction === opt.id;
             const isDevCard = opt.id === 'devcard';
+            const enabled = optionEnabled(opt.id);
             return (
               <button
                 key={opt.id}
+                type="button"
                 style={{
                   ...styles.buildBtn,
                   ...(isSelected ? styles.buildBtnSelected : {}),
-                  ...(!isMyTurn ? styles.buildBtnDisabled : {}),
+                  ...(!enabled ? styles.buildBtnDisabled : {}),
                 }}
                 onClick={() => {
-                  if (!isMyTurn) return;
+                  if (!enabled) return;
                   if (isDevCard) {
                     onBuyDevCard();
                   } else {
                     onSelectAction(isSelected ? null : opt.id);
                   }
                 }}
-                disabled={!isMyTurn}
+                disabled={!enabled}
               >
                 <div style={styles.btnIcon}>{opt.label}</div>
                 <div style={styles.btnName}>{opt.name}</div>
@@ -92,15 +124,19 @@ export default function BuildMenu({
 
       <div style={styles.actions}>
         {playableKnight && isMyTurn && (
-          <button style={styles.knightBtn} onClick={onPlayKnight}>
+          <button type="button" style={styles.knightBtn} onClick={onPlayKnight}>
             ⚔️ Knight ({player.playedKnights})
           </button>
         )}
         {canBuild && (
           <button
-            style={styles.endTurnBtn}
+            type="button"
+            style={{
+              ...styles.endTurnBtn,
+              ...(!isMyTurn || robberPending ? styles.buildBtnDisabled : {}),
+            }}
             onClick={onEndTurn}
-            disabled={!isMyTurn}
+            disabled={!isMyTurn || robberPending}
           >
             End Turn
           </button>

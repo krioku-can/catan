@@ -42,6 +42,17 @@ function legalMoves(state: GameState, player: Player): LegalMove[] {
   const moves: LegalMove[] = [];
   const add = (m: LegalMove) => moves.push(m);
 
+  // Let the deterministic rule AI handle discard, robber moves, and free roads
+  // so the LLM never skips mandatory actions by replying "end_turn".
+  if (
+    state.phase === 'discard' ||
+    state.phase === 'turn_order' ||
+    (state.pendingRobberMove && !state.robberMovedThisTurn) ||
+    (state.pendingDevAction === 'road_building' && state.pendingDevRoads > 0)
+  ) {
+    return moves;
+  }
+
   if (state.phase === 'roll') {
     add({ id: 'roll_dice', label: 'Roll the dice', kind: 'roll_dice' });
     return moves;
@@ -51,26 +62,24 @@ function legalMoves(state: GameState, player: Player): LegalMove[] {
     return moves;
   }
 
-  // Build phase (and setup handled separately below)
-  const setts = settlementCandidates(state, color);
-  if (player.settlementsRemaining > 0) {
+  // Build phase: only offer actually affordable moves so the LLM cannot stall
+  // the turn by repeatedly picking an illegal/unaffordable build.
+  if (player.settlementsRemaining > 0 && canAfford(player, BUILDING_COSTS.settlement)) {
+    const setts = settlementCandidates(state, color);
     setts.forEach((s, i) => {
-      const afford = canAfford(player, BUILDING_COSTS.settlement);
-      add({ id: `settle_${i}`, label: `Place settlement at ${s.key}${afford ? '' : ' (can\'t afford)'}`, kind: 'place_settlement', key: s.key });
+      add({ id: `settle_${i}`, label: `Place settlement at ${s.key}`, kind: 'place_settlement', key: s.key });
     });
   }
-  const cities = cityCandidates(state, color);
-  if (player.citiesRemaining > 0) {
+  if (player.citiesRemaining > 0 && canAfford(player, BUILDING_COSTS.city)) {
+    const cities = cityCandidates(state, color);
     cities.forEach((c, i) => {
-      const afford = canAfford(player, BUILDING_COSTS.city);
-      add({ id: `city_${i}`, label: `Upgrade to city at ${c.key}${afford ? '' : ' (can\'t)'}`, kind: 'place_city', key: c.key });
+      add({ id: `city_${i}`, label: `Upgrade to city at ${c.key}`, kind: 'place_city', key: c.key });
     });
   }
-  const roads = roadCandidates(state, color);
-  if (player.roadsRemaining > 0) {
+  if (player.roadsRemaining > 0 && canAfford(player, BUILDING_COSTS.road)) {
+    const roads = roadCandidates(state, color);
     roads.forEach((e, i) => {
-      const afford = canAfford(player, BUILDING_COSTS.road);
-      add({ id: `road_${i}`, label: `Build road ${e.key}${afford ? '' : ' (can\'t)'}`, kind: 'place_road', key: e.key });
+      add({ id: `road_${i}`, label: `Build road ${e.key}`, kind: 'place_road', key: e.key });
     });
   }
   if (canAfford(player, BUILDING_COSTS.devCard) && (state.devDeck || []).length > 0) {

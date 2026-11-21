@@ -1,9 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSocket } from '../hooks/useSocket';
 import { getStored, setStored } from '../storage';
+import { isPackagedApp } from '../serverUrl';
 import PushToggle from './PushToggle';
 
 function inviteUrl(roomId: string) {
+  if (isPackagedApp()) {
+    return `https://catan-lac.vercel.app/?room=${roomId}`;
+  }
   return `${window.location.origin}${window.location.pathname}?room=${roomId}`;
 }
 
@@ -99,8 +103,7 @@ export default function Lobby({ onBack, initialRoomCode }: { onBack?: () => void
     const host = room.players.find(p => p.playerId === room.hostId);
     const humans = room.players.filter(p => !p.isAI);
     const me = room.players.find(p => p.playerId === playerId);
-    const allReady = room.players.every(p => p.ready);
-    const canStart = isHost && room.players.length >= 2 && allReady;
+    const canStart = isHost && room.players.length >= 2;
 
     return (
       <div style={styles.container}>

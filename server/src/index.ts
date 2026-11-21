@@ -53,6 +53,7 @@ interface Room {
   pausedRemaining: number | null;
   timerGen: number;
   discardGen: number;
+  pendingSteal?: boolean;
 }
 
 interface PlayerConnection {
@@ -890,6 +891,7 @@ io.on('connection', (socket) => {
         break;
       }
       case 'roll_dice': {
+        if (gs.phase !== 'roll') return;
         const [d1, d2] = rollDice(gs);
         result = { dice: [d1, d2], total: d1 + d2 };
         // rollDice() sets phase to 'trade' (or 'discard' on a 7). Per official
@@ -912,18 +914,20 @@ io.on('connection', (socket) => {
         const err = moveRobber(gs, Number(data.q), Number(data.r));
         if (err) return;
         const targets = getStealTargets(gs, Number(data.q), Number(data.r));
+        room.pendingSteal = targets.length > 0;
         result = { success: true, stealTargets: targets, hex: { q: Number(data.q), r: Number(data.r) } };
         break;
       }
       case 'steal': {
         if (!isCurrent) return;
-        if (!gs.robberMovedThisTurn) return;
+        if (!gs.robberMovedThisTurn || !room.pendingSteal) return;
         const [rq, rr] = (gs.robberHex || '0,0').split(',').map(Number);
         const legal = getStealTargets(gs, rq, rr);
         if (!legal.includes(data.target)) return;
         const out: { resource?: ResourceType } = {};
         const err = stealFrom(gs, data.target, out);
         if (err) return;
+        room.pendingSteal = false;
         result = {
           success: true,
           from: data.target,
@@ -939,6 +943,7 @@ io.on('connection', (socket) => {
       }
       case 'place_settlement': {
         if (gs.setupPhase) {
+          if (gs.phase !== 'setup_settlement') return;
           const err = placeSetupSettlement(gs, data.key);
           if (err) return;
           advanceSetup(gs);
@@ -951,6 +956,7 @@ io.on('connection', (socket) => {
       }
       case 'place_road': {
         if (gs.setupPhase) {
+          if (gs.phase !== 'setup_road') return;
           const err = placeSetupRoad(gs, data.key);
           if (err) return;
           advanceSetup(gs);
@@ -979,11 +985,14 @@ io.on('connection', (socket) => {
         break;
       }
       case 'end_turn': {
+        if (gs.setupPhase || (gs.phase !== 'trade' && gs.phase !== 'build')) return;
+        room.pendingSteal = false;
         endTurn(gs);
         result = { success: true };
         break;
       }
       case 'skip_trade': {
+        if (gs.phase !== 'trade') return;
         gs.phase = 'build';
         result = { success: true };
         break;
@@ -1203,7 +1212,7 @@ function scheduleAITradeResponses(room: Room) {
       for (const [r, n] of Object.entries(offer.want || {})) {
         if ((ai.resources[r as ResourceType] || 0) < (Number(n) || 0)) canPay = false;
       }
-      const favorable = canPay && (wantTotal >= giveTotal || (givesSurplus && getsScarce));
+      const favorable = canPay && (wantTotal <= giveTotal || (givesSurplus && getsScarce));
       const err = respondToTrade(gs, ai.color, offer.from, favorable);
       if (err) return;
       emitGameToRoom(room, favorable ? 'accept_trade' : 'reject_trade', {

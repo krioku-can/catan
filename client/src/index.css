@@ -342,6 +342,40 @@ body {
   100% { transform: scale(1); opacity: 1; }
 }
 
+/* Turn clock badge in online TurnCoach */
+.turn-timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(20, 12, 6, 0.72);
+  border: 1px solid rgba(255, 213, 79, 0.35);
+  color: #ffe082;
+  font-size: 12px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.turn-timer-warn {
+  border-color: #f59e0b;
+  color: #fbbf24;
+}
+.turn-timer-danger {
+  border-color: #ef4444;
+  color: #fca5a5;
+  background: rgba(127, 29, 29, 0.65);
+}
+.turn-timer-paused {
+  opacity: 0.7;
+}
+.turn-timer-hint {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.8;
+}
+
 /* Mobile: slightly tighter score names */
 @media (max-width: 420px) {
   .score-name { max-width: 64px; font-size: 11px; }

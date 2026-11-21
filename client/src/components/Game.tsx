@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { GameState, GameConfig, PlayerColor, ResourceType } from '../game/types';
-import { createInitialState, getCurrentPlayer, getPlayerByColor, executeBankTrade, proposePublicTrade, respondToTrade, completeTradeWith, cancelTradeOffer, aiRespondToPublicOffers, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, countHeldDevCards, getStealTargets, stealFrom, checkVictory } from '../game/rules'
+import { createInitialState, getCurrentPlayer, getPlayerByColor, executeBankTrade, proposePublicTrade, respondToTrade, completeTradeWith, cancelTradeOffer, aiRespondToPublicOffers, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, countHeldDevCards, getStealTargets, stealFrom, checkVictory, canAfford, BUILDING_COSTS } from '../game/rules'
 import { PERSONALITIES, learnFromGame } from '../game/personality';
 import { llmChooseAction } from '../game/llmAI';
 import Board from './Board';
@@ -18,7 +18,7 @@ import DevCardPanel from './DevCardPanel';
 import TurnCoach from './TurnCoach';
 import DevCardReveal from './DevCardReveal';
 import { recordGame } from '../stats';
-import { getPortRate } from '../game/board';
+import { getPortRate, canPlaceSettlement, canPlaceRoad, getEdgesForIntersection } from '../game/board';
 import { setStored, getStored } from '../storage';
 import { unlockAudio, sfx, isMuted, setMuted } from '../audio';
 import { getTurnCoach } from '../turnCoach';
@@ -71,6 +71,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
   const [aiSpeed, setAiSpeedState] = useState<AiSpeed>(() => loadAiSpeed());
   const startedRef = useRef(false);
   const statsRecordedRef = useRef(false);
+  const learnedRef = useRef(false);
   const lastTurnColorRef = useRef<string | null>(null);
 
   const setAiSpeed = useCallback((s: AiSpeed) => {
@@ -114,8 +115,8 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
   // Learning: when a local game ends, record each AI's result and nudge their
   // weights toward the winner's profile. Only fires once per game.
   useEffect(() => {
-    if (!gameState?.winner || statsRecordedRef.current) return;
-    statsRecordedRef.current = true;
+    if (!gameState?.winner || learnedRef.current) return;
+    learnedRef.current = true;
     const results: Record<string, { vp: number; won: boolean }> = {};
     gameState.players.forEach(p => {
       if (!p.isAI || !p.personalityId) return;
@@ -150,6 +151,13 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
 
   const startGame = useCallback((c: GameConfig) => {
     const state = createInitialState(c);
+    statsRecordedRef.current = false;
+    learnedRef.current = false;
+    setTurnOrderRolls(null);
+    setSelectedAction(null);
+    setPendingSteal(null);
+    setStealTargets([]);
+    setShowPanel(null);
     _setConfig(c);
     setGameState(state);
     setShowSetup(false);
@@ -202,18 +210,19 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     const current = getCurrentPlayer(gameState);
     if (!current.isAI) return;
 
+    let cancelled = false;
     const delay = AI_SPEED_MS[aiSpeed] ?? AI_SPEED_MS.slow;
     const t = setTimeout(() => {
       const run = async () => {
-        // LLM-driven personalities: for LOCAL games on the Mac, try the
-        // personality model first, then fall back to the rule AI. We skip the
-        // setup phase (6 quick placements) and only reason on real decisions,
-        // keeping setup snappy.
+        // LLM-driven personalities: try the personality model first, then fall
+        // back to the rule AI. Skip setup phase to keep setup snappy.
         let action: { action: string; data?: any } | null = null;
         if (!gameState.setupPhase && current.personalityId) {
           const llm = await llmChooseAction(gameState, current);
+          if (cancelled) return;
           if (llm.ok && llm.action) action = llm.action;
         }
+        if (cancelled) return;
         if (!action) action = aiTurn(gameState);
         if (!action) {
           // AI is waiting (e.g. not in the discard queue, or no legal move).
@@ -283,14 +292,17 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
               if (err === null) addLog(`${current.name} placed a road`);
             }
             break;
-          case 'place_city':
-            placeCity(gameState, action.data.key);
-            addLog(`${current.name} built a city`);
+          case 'place_city': {
+            const err = placeCity(gameState, action.data.key);
+            if (err === null) addLog(`${current.name} built a city`);
             break;
+          }
           case 'buy_dev_card': {
             const card = buyDevCard(gameState);
-            addLog(`${current.name} bought a development card`);
-            if (card) setDevReveal({ buyerName: current.name });
+            if (card) {
+              addLog(`${current.name} bought a development card`);
+              setDevReveal({ buyerName: current.name });
+            }
             break;
           }
           case 'bank_trade':
@@ -356,11 +368,14 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           default:
             break;
         }
-        setGameState({ ...gameState });
+        if (!cancelled) setGameState({ ...gameState });
       };
       run();
     }, delay);
-    return () => clearTimeout(t);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
   }, [gameState, addLog, aiSpeed]);
 
   const handleHexClick = useCallback((q: number, r: number) => {
@@ -378,25 +393,26 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           setStealTargets(targets);
         } else {
           addLog('Robber moved');
-          setGameState({ ...gameState });
         }
+        setGameState({ ...gameState });
       }
       return;
     }
   }, [gameState, robberMode, addLog]);
 
   const handleIntersectionClick = useCallback((key: string) => {
-    if (!gameState) return;
+    if (!gameState || robberMode || pendingSteal) return;
     const player = getCurrentPlayer(gameState);
+    if (player.isAI) return;
 
     if (gameState.setupPhase) {
       if (gameState.phase === 'setup_settlement') {
+        if (!canPlaceSettlement(key, gameState.intersections, gameState.edges)) return;
         if (!window.confirm('Place settlement on this corner?')) return;
         const err = placeSetupSettlement(gameState, key);
         if (err === null) {
           sfx.build();
           addLog(`${player.name} placed a settlement`);
-          setGameState({ ...gameState });
           advanceSetup(gameState);
           setGameState({ ...gameState });
         }
@@ -406,6 +422,11 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
 
     if (gameState.phase === 'build' || gameState.phase === 'trade') {
       if (selectedAction === 'settlement') {
+        const valid = player.settlementsRemaining > 0
+          && canAfford(player, BUILDING_COSTS.settlement)
+          && canPlaceSettlement(key, gameState.intersections, gameState.edges)
+          && getEdgesForIntersection(key, gameState.edges).some(e => e.road === player.color);
+        if (!valid) return;
         if (!window.confirm('Place settlement on this corner?')) return;
         const err = placeSettlement(gameState, key);
         if (err === null) {
@@ -415,6 +436,12 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           setGameState({ ...gameState });
         }
       } else if (selectedAction === 'city') {
+        const inter = gameState.intersections[key];
+        const valid = player.citiesRemaining > 0
+          && canAfford(player, BUILDING_COSTS.city)
+          && inter?.building === 'settlement'
+          && inter.owner === player.color;
+        if (!valid) return;
         if (!window.confirm('Upgrade this settlement to a city?')) return;
         const err = placeCity(gameState, key);
         if (err === null) {
@@ -425,20 +452,30 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
         }
       }
     }
-  }, [gameState, selectedAction, addLog]);
+  }, [gameState, selectedAction, addLog, robberMode, pendingSteal]);
 
   const handleEdgeClick = useCallback((key: string) => {
-    if (!gameState) return;
+    if (!gameState || robberMode || pendingSteal) return;
     const player = getCurrentPlayer(gameState);
+    if (player.isAI) return;
 
     if (gameState.setupPhase) {
       if (gameState.phase === 'setup_road') {
+        const edge = gameState.edges[key];
+        if (!edge || edge.road) return;
+        const tagged = gameState.lastSetupSettlement;
+        const justPlaced = (tagged && gameState.intersections[tagged]?.owner === player.color)
+          ? tagged
+          : Object.values(gameState.intersections).find(i =>
+              i.owner === player.color && i.building
+              && !Object.values(gameState.edges).some(e => e.road === player.color && (e.from === i.key || e.to === i.key))
+            )?.key ?? null;
+        if (!justPlaced || (edge.from !== justPlaced && edge.to !== justPlaced)) return;
         if (!window.confirm('Place road on this edge?')) return;
         const err = placeSetupRoad(gameState, key);
         if (err === null) {
           sfx.road();
           addLog(`${player.name} placed a road`);
-          setGameState({ ...gameState });
           advanceSetup(gameState);
           setGameState({ ...gameState });
         }
@@ -449,6 +486,10 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     // Normal roads (selected) or free Road Building placements.
     const freeRoads = gameState.pendingDevAction === 'road_building' && gameState.pendingDevRoads > 0;
     if (freeRoads || ((gameState.phase === 'build' || gameState.phase === 'trade') && selectedAction === 'road')) {
+      const valid = player.roadsRemaining > 0
+        && (freeRoads || canAfford(player, BUILDING_COSTS.road))
+        && canPlaceRoad(key, player.color, gameState.edges, gameState.intersections);
+      if (!valid) return;
       if (!window.confirm(freeRoads ? 'Place free road on this edge?' : 'Build road on this edge?')) return;
       const err = placeRoad(gameState, key);
       if (err === null) {
@@ -456,11 +497,11 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
         addLog(freeRoads
           ? `${player.name} placed a free road (${gameState.pendingDevRoads} left)`
           : `${player.name} built a road`);
-        if (!freeRoads) setSelectedAction(null);
+        if (!freeRoads || gameState.pendingDevRoads <= 0) setSelectedAction(null);
         setGameState({ ...gameState });
       }
     }
-  }, [gameState, selectedAction, addLog]);
+  }, [gameState, selectedAction, addLog, robberMode, pendingSteal]);
 
   const handleTurnOrder = useCallback(() => {
     if (!gameState) return;
@@ -483,7 +524,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
   }, [gameState, turnOrderRolls, addLog]);
 
   const handleRollDice = useCallback(() => {
-    if (!gameState) return;
+    if (!gameState || diceRolling || gameState.phase !== 'roll' || robberMode || pendingSteal) return;
     setDiceRolling(true);
     setTimeout(() => {
       const [d1, d2] = rollDice(gameState);
@@ -517,73 +558,75 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           }
           discardResources(gameState, ai.color, toDiscard);
         }
-        // Steal targets are chosen AFTER the robber moves to a new hex.
+        // Collapse bottom sheet so the player can tap a hex to move the robber
+        setShowPanel(null);
       }
       
       setDiceRolling(false);
       setGameState({ ...gameState });
     }, 1000);
-  }, [gameState, addLog]);
+  }, [gameState, diceRolling, robberMode, pendingSteal, addLog]);
 
   const handleEndTurn = useCallback(() => {
-    if (!gameState) return;
+    if (!gameState || robberMode || pendingSteal) return;
     const player = getCurrentPlayer(gameState);
     endTurn(gameState);
     addLog(`${player.name} ended their turn`);
     setSelectedAction(null);
     setGameState({ ...gameState });
     // AI loop is driven by the useEffect — no need to force a second kick here.
-  }, [gameState, addLog]);
+  }, [gameState, robberMode, pendingSteal, addLog]);
 
   const handleSkipTrade = useCallback(() => {
-    if (!gameState) return;
+    if (!gameState || robberMode || pendingSteal) return;
     gameState.phase = 'build';
     setSelectedAction(null);
     setGameState({ ...gameState });
-  }, [gameState]);
+  }, [gameState, robberMode, pendingSteal]);
 
   const handleDiscard = useCallback((discard: Partial<Record<ResourceType, number>>) => {
     if (!gameState) return;
-    const me = gameState.players.find(p => !p.isAI);
-    if (!me) return;
-    const err = discardResources(gameState, me.color, discard);
+    const target = gameState.players.find(p => !p.isAI && gameState.discardQueue.includes(p.color));
+    if (!target) return;
+    const err = discardResources(gameState, target.color, discard);
     if (err === null) {
       sfx.discard();
-      addLog('You discarded cards after the 7');
+      addLog(`${target.name} discarded cards after the 7`);
       setGameState({ ...gameState });
     }
   }, [gameState, addLog]);
 
   const handlePlayRoadBuilding = useCallback(() => {
-    if (!gameState) return;
+    if (!gameState || robberMode || pendingSteal) return;
     const err = playRoadBuilding(gameState);
     if (err === null) {
       addLog(`${getCurrentPlayer(gameState).name} played Road Building!`);
       setSelectedAction('road');
+      setShowPanel(null);
       setGameState({ ...gameState });
     }
-  }, [gameState, addLog]);
+  }, [gameState, robberMode, pendingSteal, addLog]);
 
   const handlePlayYearOfPlenty = useCallback((r1: ResourceType, r2: ResourceType) => {
-    if (!gameState) return;
+    if (!gameState || robberMode || pendingSteal) return;
     const err = playYearOfPlenty(gameState, r1, r2);
     if (err === null) {
       addLog(`${getCurrentPlayer(gameState).name} played Year of Plenty!`);
       setGameState({ ...gameState });
     }
-  }, [gameState, addLog]);
+  }, [gameState, robberMode, pendingSteal, addLog]);
 
   const handlePlayMonopoly = useCallback((r: ResourceType) => {
-    if (!gameState) return;
+    if (!gameState || robberMode || pendingSteal) return;
     const err = playMonopoly(gameState, r);
     if (err === null) {
       addLog(`${getCurrentPlayer(gameState).name} played Monopoly on ${r}!`);
       setGameState({ ...gameState });
     }
-  }, [gameState, addLog]);
+  }, [gameState, robberMode, pendingSteal, addLog]);
 
   const handleBuyDevCard = useCallback(() => {
-    if (!gameState) return;
+    if (!gameState || robberMode || pendingSteal) return;
     const card = buyDevCard(gameState);
     if (card) {
       sfx.devCard();
@@ -591,17 +634,18 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
       setDevReveal({ type: card.type });
       setGameState({ ...gameState });
     }
-  }, [gameState, addLog]);
+  }, [gameState, robberMode, pendingSteal, addLog]);
 
   const handlePlayKnight = useCallback(() => {
-    if (!gameState) return;
+    if (!gameState || robberMode || pendingSteal) return;
     const err = playKnight(gameState);
     if (err === null) {
       addLog(`${getCurrentPlayer(gameState).name} played a Knight!`);
       setRobberMode(true);
+      setShowPanel(null);
       setGameState({ ...gameState });
     }
-  }, [gameState, addLog]);
+  }, [gameState, robberMode, pendingSteal, addLog]);
 
   const handleSteal = useCallback((target: PlayerColor) => {
     if (!gameState || !pendingSteal) return;
@@ -657,7 +701,11 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
 
   const player = getCurrentPlayer(gameState);
   const isMyTurn = !player.isAI;
-  const me = gameState.players.find(p => !p.isAI) || gameState.players[0];
+  const discardHuman = gameState.phase === 'discard'
+    ? gameState.players.find(p => !p.isAI && gameState.discardQueue.includes(p.color))
+    : undefined;
+  const me = discardHuman || (!player.isAI ? player : (gameState.players.find(p => !p.isAI) || gameState.players[0]));
+  const robberPending = robberMode || !!(pendingSteal && stealTargets.length > 0);
 
   return (
     <div style={styles.mobileContainer}>
@@ -760,6 +808,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           onEdgeClick={handleEdgeClick}
           robberMode={robberMode}
           selectedAction={selectedAction}
+          isMyTurn={isMyTurn}
           debug={debug}
         />
         <DiceFlash
@@ -790,12 +839,13 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
       )}
 
       {/* Discard modal after a 7 */}
-      {gameState.phase === 'discard' && me && gameState.discardQueue.includes(me.color) && (
+      {discardHuman && (
         <DiscardModal
-          player={me}
+          key={discardHuman.color}
+          player={discardHuman}
           mustDiscard={Math.floor(
             (['brick', 'lumber', 'wool', 'grain', 'ore'] as ResourceType[])
-              .reduce((s, r) => s + (me.resources[r] || 0), 0) / 2
+              .reduce((s, r) => s + (discardHuman.resources[r] || 0), 0) / 2
           )}
           onDiscard={handleDiscard}
         />
@@ -866,24 +916,29 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
                       <DiceRoller
                         onRoll={handleRollDice}
                         rolling={diceRolling}
-                        disabled={gameState.phase !== 'roll' || !isMyTurn}
+                        disabled={gameState.phase !== 'roll' || !isMyTurn || robberPending}
                         result={gameState.dice}
                       />
                       <BuildMenu
-                        player={player}
+                        player={me}
                         phase={gameState.phase}
                         isMyTurn={isMyTurn}
                         selectedAction={selectedAction}
-                        onSelectAction={setSelectedAction}
+                        onSelectAction={(act) => {
+                          setSelectedAction(act);
+                          if (act) setShowPanel(null);
+                        }}
                         onBuyDevCard={handleBuyDevCard}
                         onPlayKnight={handlePlayKnight}
                         onEndTurn={handleEndTurn}
                         hasKnight={me.devCards.some(c => c.type === 'knight' && !c.played && !c.boughtThisTurn)}
                         pendingFreeRoads={isMyTurn ? gameState.pendingDevRoads : 0}
+                        robberPending={robberPending}
+                        devDeckCount={(gameState.devDeck || []).length}
                       />
                       <TradePanel
                         gameState={gameState}
-                        isMyTurn={isMyTurn}
+                        isMyTurn={isMyTurn && !robberPending}
                         phase={gameState.phase}
                         onBankTrade={(give, want) => {
                           const gRes = Object.keys(give)[0] as ResourceType | undefined;
@@ -938,13 +993,13 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
                       <DevCardPanel
                         player={me}
                         phase={gameState.phase}
-                        isMyTurn={isMyTurn}
+                        isMyTurn={isMyTurn && !robberPending}
                         onPlayKnight={handlePlayKnight}
                         onPlayRoadBuilding={handlePlayRoadBuilding}
                         onPlayYearOfPlenty={handlePlayYearOfPlenty}
                         onPlayMonopoly={handlePlayMonopoly}
                       />
-                      {gameState.phase === 'trade' && isMyTurn && (
+                      {gameState.phase === 'trade' && isMyTurn && !robberPending && (
                         <button style={styles.doneTradingBtn} onClick={handleSkipTrade}>
                           ✅ Done Trading
                         </button>
@@ -1054,46 +1109,57 @@ function SetupScreen({
           ))}
         </div>
 
-        {Array.from({ length: numPlayers }).map((_, i) => (
-          <div key={i} style={styles.playerRow}>
-            <div style={{ ...styles.colorDot, backgroundColor: ['red', 'blue', 'white', 'orange'][i] }} />
-            <input
-              style={styles.nameInput}
-              placeholder={i === 0 ? 'You' : `Player ${i + 1}`}
-              value={names[i]}
-              onChange={e => {
-                const n = [...names];
-                n[i] = e.target.value;
-                setNames(n);
-              }}
-            />
-            {i > 0 && (
-              <label style={styles.aiCheckbox}>
-                <input
-                  type="checkbox"
-                  checked={aiPlayers.includes(i)}
-                  onChange={e => {
-                    if (e.target.checked) setAiPlayers([...aiPlayers, i]);
-                    else setAiPlayers(aiPlayers.filter(a => a !== i));
-                  }}
-                />
-                AI
-              </label>
-            )}
-            {i > 0 && aiPlayers.includes(i) && (
-              <select
-                style={styles.personalitySelect}
-                value={aiPersonalities[i] || ''}
-                onChange={e => setAiPersonalities({ ...aiPersonalities, [i]: e.target.value })}
-              >
-                <option value="">Auto</option>
-                {Object.values(PERSONALITIES).map(p => (
-                  <option key={p.id} value={p.id}>{p.emoji} {p.name}</option>
-                ))}
-              </select>
-            )}
-          </div>
-        ))}
+        <div style={styles.playerList}>
+          {Array.from({ length: numPlayers }).map((_, i) => {
+            const isAI = i > 0 && aiPlayers.includes(i);
+            return (
+              <div key={i} style={styles.playerSlot}>
+                <div style={styles.playerRow}>
+                  <div style={{ ...styles.colorDot, backgroundColor: ['red', 'blue', 'white', 'orange'][i] }} />
+                  <input
+                    style={styles.nameInput}
+                    placeholder={i === 0 ? 'You' : isAI ? `AI ${i + 1}` : `Player ${i + 1}`}
+                    value={names[i]}
+                    onChange={e => {
+                      const n = [...names];
+                      n[i] = e.target.value;
+                      setNames(n);
+                    }}
+                    maxLength={20}
+                  />
+                  {i > 0 && (
+                    <label style={styles.aiCheckbox}>
+                      <input
+                        type="checkbox"
+                        checked={isAI}
+                        onChange={e => {
+                          if (e.target.checked) setAiPlayers([...aiPlayers, i]);
+                          else setAiPlayers(aiPlayers.filter(a => a !== i));
+                        }}
+                      />
+                      AI
+                    </label>
+                  )}
+                </div>
+                {isAI && (
+                  <div style={styles.personalityRow}>
+                    <span style={styles.personalityLabel}>Style</span>
+                    <select
+                      style={styles.personalitySelect}
+                      value={aiPersonalities[i] || ''}
+                      onChange={e => setAiPersonalities({ ...aiPersonalities, [i]: e.target.value })}
+                    >
+                      <option value="">Auto</option>
+                      {Object.values(PERSONALITIES).map(p => (
+                        <option key={p.id} value={p.id}>{p.emoji} {p.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
 
         <div style={styles.divider} />
         <label style={styles.label}>Victory points to win</label>
@@ -1133,7 +1199,7 @@ function SetupScreen({
             <button
               key={s}
               type="button"
-              style={{ ...styles.countBtn, fontSize: 13, ...(aiSpeed === s ? styles.countBtnActive : {}) }}
+              style={{ ...styles.compactBtn, ...(aiSpeed === s ? styles.countBtnActive : {}) }}
               onClick={() => onAiSpeedChange(s)}
             >
               {AI_SPEED_LABEL[s]}
@@ -1150,7 +1216,7 @@ function SetupScreen({
             <button
               key={l}
               type="button"
-              style={{ ...styles.countBtn, ...(aiLevel === l ? styles.countBtnActive : {}) }}
+              style={{ ...styles.compactBtn, ...(aiLevel === l ? styles.countBtnActive : {}) }}
               onClick={() => setAiLevel(l)}
             >
               {l === 'easy' ? '😌 Easy' : l === 'normal' ? '⚖️ Normal' : '🔥 Hard'}
@@ -1185,7 +1251,14 @@ function SetupScreen({
             style={styles.startBtn}
             onClick={() => onStart({
               numPlayers,
-              playerNames: names.slice(0, numPlayers).map((n, i) => n || (i === 0 ? defaultName : (aiPersonalities[i] ? PERSONALITIES[aiPersonalities[i]].name : `AI ${i + 1}`))),
+              playerNames: names.slice(0, numPlayers).map((n, i) => {
+                if (n.trim()) return n.trim();
+                if (i === 0) return defaultName;
+                if (aiPlayers.includes(i)) {
+                  return aiPersonalities[i] ? PERSONALITIES[aiPersonalities[i]].name : `AI ${i + 1}`;
+                }
+                return `Player ${i + 1}`;
+              }),
               aiPlayers,
               victoryPointsToWin,
               friendlyRobber,
@@ -1351,9 +1424,10 @@ const styles: Record<string, React.CSSProperties> = {
   setupCard: {
     background: 'linear-gradient(180deg, rgba(48,28,14,0.95), rgba(28,16,8,0.98))',
     borderRadius: 12,
-    padding: 20,
+    padding: 16,
     width: '100%',
     maxWidth: 400,
+    boxSizing: 'border-box',
     display: 'flex',
     flexDirection: 'column',
     gap: 12,
@@ -1362,22 +1436,42 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: 8,
   },
   label: { fontSize: 13, color: '#c4b49a', textTransform: 'uppercase', letterSpacing: 1 },
-  playerCountRow: { display: 'flex', gap: 8 },
+  playerCountRow: { display: 'flex', gap: 6, width: '100%', boxSizing: 'border-box' },
   countBtn: {
-    flex: 1, padding: 12, border: '2px solid rgba(200,150,70,0.25)', borderRadius: 8,
-    background: 'rgba(20,12,6,0.7)', color: '#f5efe4', fontSize: 18, fontWeight: 'bold', cursor: 'pointer',
+    flex: 1, minWidth: 0, padding: '10px 8px', border: '2px solid rgba(200,150,70,0.25)', borderRadius: 8,
+    background: 'rgba(20,12,6,0.7)', color: '#f5efe4', fontSize: 16, fontWeight: 'bold', cursor: 'pointer',
+  },
+  compactBtn: {
+    flex: 1, minWidth: 0, padding: '10px 4px', border: '2px solid rgba(200,150,70,0.25)', borderRadius: 8,
+    background: 'rgba(20,12,6,0.7)', color: '#f5efe4', fontSize: 13, fontWeight: 'bold', cursor: 'pointer',
+    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
   },
   countBtnActive: { borderColor: '#ffd700', background: 'rgba(60,36,18,0.95)' },
-  playerRow: { display: 'flex', alignItems: 'center', gap: 8 },
-  colorDot: { width: 14, height: 14, borderRadius: '50%', flexShrink: 0 },
-  nameInput: {
-    flex: 1, padding: '8px 12px', border: '1px solid rgba(200,150,70,0.3)', borderRadius: 6,
-    background: 'rgba(20,12,6,0.7)', color: '#f5efe4', fontSize: 16,
+  playerList: { display: 'flex', flexDirection: 'column', gap: 8, width: '100%' },
+  playerSlot: {
+    display: 'flex', flexDirection: 'column', gap: 6,
+    padding: '8px 10px', borderRadius: 8,
+    background: 'rgba(20,12,6,0.45)', border: '1px solid rgba(200,150,70,0.18)',
+    boxSizing: 'border-box', width: '100%',
   },
-  aiCheckbox: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, color: '#c4b49a' },
+  playerRow: { display: 'flex', alignItems: 'center', gap: 8, width: '100%', minWidth: 0 },
+  colorDot: { width: 14, height: 14, borderRadius: '50%', flexShrink: 0, border: '1px solid rgba(0,0,0,0.35)' },
+  nameInput: {
+    flex: 1, minWidth: 0, width: '100%', padding: '8px 10px', border: '1px solid rgba(200,150,70,0.3)', borderRadius: 6,
+    background: 'rgba(20,12,6,0.75)', color: '#f5efe4', fontSize: 15, boxSizing: 'border-box',
+  },
+  aiCheckbox: {
+    display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, color: '#c4b49a',
+    flexShrink: 0, whiteSpace: 'nowrap', cursor: 'pointer',
+  },
+  personalityRow: {
+    display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 22, width: '100%', boxSizing: 'border-box',
+  },
+  personalityLabel: { fontSize: 12, color: '#a8967c', flexShrink: 0 },
   personalitySelect: {
-    marginLeft: 8, background: '#2a1a0e', color: '#f5efe4',
-    border: '1px solid #5a4632', borderRadius: 8, padding: '4px 6px', fontSize: 12,
+    flex: 1, minWidth: 0, width: '100%', background: '#2a1a0e', color: '#f5efe4',
+    border: '1px solid #5a4632', borderRadius: 6, padding: '6px 8px', fontSize: 13,
+    boxSizing: 'border-box',
   },
   setupActions: {
     position: 'sticky',

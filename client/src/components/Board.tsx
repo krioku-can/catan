@@ -1,6 +1,15 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import type { GameState, Intersection, Edge, Player } from '../game/types';
-import { hexToPixel, pixelToHex, getHexCorners, getPortIntersections } from '../game/board';
+import {
+  hexToPixel,
+  pixelToHex,
+  getHexCorners,
+  getPortIntersections,
+  canPlaceSettlement,
+  canPlaceRoad,
+  getEdgesForIntersection,
+} from '../game/board';
+import { getCurrentPlayer } from '../game/rules';
 
 const PLAYER_COLORS: Record<string, string> = {
   red: '#d32f2f',
@@ -60,6 +69,7 @@ interface BoardProps {
   onEdgeClick: (key: string) => void;
   robberMode: boolean;
   selectedAction: string | null;
+  isMyTurn?: boolean;
   debug?: boolean;
 }
 
@@ -1523,25 +1533,98 @@ export default function Board({
   onEdgeClick,
   robberMode,
   selectedAction,
+  isMyTurn = true,
   debug = false,
 }: BoardProps) {
+  const MIN_ZOOM = 0.3;
+  const MAX_ZOOM = 3.0;
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const zoomRef = useRef(1);
+  const panRef = useRef({ x: 0, y: 0 });
+  const fitZoomRef = useRef(1);
+  const userTransformedRef = useRef(false);
   const [assetsReady, setAssetsReady] = useState(0);
   const imagesRef = useRef<Record<string, HTMLImageElement | null>>({});
   const robberRef = useRef<HTMLImageElement | null>(null);
-  const lastTouch = useRef<{ x: number; y: number } | null>(null);
-  const lastPinchDist = useRef<number | null>(null);
   const dragStart = useRef<{ x: number; y: number } | null>(null);
   const dragPanStart = useRef<{ x: number; y: number } | null>(null);
+  const pinchStart = useRef<{
+    dist: number;
+    zoom: number;
+    panX: number;
+    panY: number;
+    midX: number;
+    midY: number;
+  } | null>(null);
   const didPan = useRef(false);
+  const gestureWasMultiTouch = useRef(false);
+  const lastTouchTime = useRef(0);
   const posCache = useRef<Map<string, { x: number; y: number }>>(new Map());
 
   const CANVAS_W = hexSize * 13.2;
   const CANVAS_H = hexSize * 11;
   const BOARD_OX = hexSize * 0.55; // shift island right so piece tray sits on wood
+
+  const clampPan = useCallback((x: number, y: number, z: number) => {
+    const maxPanX = Math.max(80, (CANVAS_W * z) / 2);
+    const maxPanY = Math.max(80, (CANVAS_H * z) / 2);
+    return {
+      x: Math.max(-maxPanX, Math.min(maxPanX, x)),
+      y: Math.max(-maxPanY, Math.min(maxPanY, y)),
+    };
+  }, [CANVAS_W, CANVAS_H]);
+
+  const applyTransform = useCallback((nextZoom: number, nextPan: { x: number; y: number }) => {
+    const z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, nextZoom));
+    const p = clampPan(nextPan.x, nextPan.y, z);
+    zoomRef.current = z;
+    panRef.current = p;
+    if (stageRef.current) {
+      stageRef.current.style.transform = `translate3d(${p.x}px, ${p.y}px, 0) scale(${z})`;
+    }
+    setZoom(z);
+    setPan(p);
+  }, [clampPan]);
+
+  const computeFitView = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return { z: 1, p: { x: 0, y: 0 } };
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return { z: 1, p: { x: 0, y: 0 } };
+    const handBarPad = 58; // keep island clear of the bottom floating HandBar
+    const availW = Math.max(120, rect.width - 8);
+    const availH = Math.max(120, rect.height - handBarPad);
+    const fit = Math.min(availW / CANVAS_W, availH / CANVAS_H);
+    const z = Math.max(MIN_ZOOM, Math.min(1.15, fit));
+    const yShift = rect.height > 200 ? -18 : 0;
+    return { z, p: { x: 0, y: yShift } };
+  }, [CANVAS_W, CANVAS_H]);
+
+  // Fit board to viewport on mount / resize until the user manually zooms/pans
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const updateFit = () => {
+      const { z, p } = computeFitView();
+      fitZoomRef.current = z;
+      if (!userTransformedRef.current) {
+        applyTransform(z, p);
+      }
+    };
+    updateFit();
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(updateFit);
+      ro.observe(el);
+      return () => ro.disconnect();
+    }
+    window.addEventListener('resize', updateFit);
+    return () => window.removeEventListener('resize', updateFit);
+  }, [computeFitView, applyTransform]);
 
   // Preload painted hex + robber assets once
   useEffect(() => {
@@ -1654,6 +1737,30 @@ export default function Board({
       });
     }
 
+    // Compute legal highlight sets for the active turn/action
+    const current = getCurrentPlayer(gameState);
+    const activeTurn = isMyTurn && !gameState.winner;
+    const isSetupRoad = activeTurn && gameState.setupPhase && gameState.phase === 'setup_road';
+    const isSetupSettlement = activeTurn && gameState.setupPhase && gameState.phase === 'setup_settlement';
+    const isFreeRoad = activeTurn && !gameState.setupPhase && gameState.pendingDevAction === 'road_building' && gameState.pendingDevRoads > 0;
+    const canBuildPhase = gameState.phase === 'build' || gameState.phase === 'trade';
+    const isPlacingRoad = isSetupRoad || isFreeRoad || (activeTurn && !gameState.setupPhase && canBuildPhase && selectedAction === 'road');
+    const isPlacingSettlement = isSetupSettlement || (activeTurn && !gameState.setupPhase && canBuildPhase && selectedAction === 'settlement');
+    const isPlacingCity = activeTurn && !gameState.setupPhase && canBuildPhase && selectedAction === 'city';
+
+    let setupSettlementKey: string | null = null;
+    if (isSetupRoad && current) {
+      const tagged = gameState.lastSetupSettlement;
+      if (tagged && gameState.intersections[tagged]?.owner === current.color) {
+        setupSettlementKey = tagged;
+      } else {
+        const mine = Object.values(gameState.intersections).filter(i => i.owner === current.color && i.building);
+        const roadCountAt = (k: string) =>
+          Object.values(gameState.edges).filter(e => e.road === current.color && (e.from === k || e.to === k)).length;
+        setupSettlementKey = mine.find(s => roadCountAt(s.key) === 0)?.key ?? null;
+      }
+    }
+
     // Roads (under buildings)
     Object.values(gameState.edges).forEach((edge: Edge) => {
       const a = positions.get(edge.from);
@@ -1661,21 +1768,23 @@ export default function Board({
       if (!a || !b) return;
       const ax = a.x + W / 2, ay = a.y + H / 2;
       const bx = b.x + W / 2, by = b.y + H / 2;
-      const placingRoad = gameState.setupPhase
-        ? gameState.phase === 'setup_road'
-        : gameState.phase === 'build' && selectedAction === 'road';
-      if (!edge.road && placingRoad) {
-        ctx.save();
-        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-        ctx.lineWidth = Math.max(8, hexSize * 0.18);
-        ctx.lineCap = 'round';
-        ctx.setLineDash([6, 6]);
-        ctx.beginPath();
-        ctx.moveTo(ax, ay);
-        ctx.lineTo(bx, by);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.restore();
+      if (!edge.road && isPlacingRoad && current) {
+        const validRoad = isSetupRoad
+          ? (!!setupSettlementKey && (edge.from === setupSettlementKey || edge.to === setupSettlementKey))
+          : canPlaceRoad(edge.key, current.color, gameState.edges, gameState.intersections);
+        if (validRoad) {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(255, 224, 130, 0.85)';
+          ctx.lineWidth = Math.max(8, hexSize * 0.17);
+          ctx.lineCap = 'round';
+          ctx.setLineDash([7, 6]);
+          ctx.beginPath();
+          ctx.moveTo(ax, ay);
+          ctx.lineTo(bx, by);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.restore();
+        }
       }
       if (edge.road) {
         drawRoad(ctx, ax, ay, bx, by, PLAYER_COLORS[edge.road] || '#666', hexSize);
@@ -1692,14 +1801,27 @@ export default function Board({
         drawCity(ctx, cx, cy, PLAYER_COLORS[inter.owner || ''] || '#666', hexSize);
       } else if (inter.building === 'settlement') {
         drawSettlement(ctx, cx, cy, PLAYER_COLORS[inter.owner || ''] || '#666', hexSize);
-      } else if (selectedAction === 'settlement' || selectedAction === 'city' || gameState.setupPhase) {
-        ctx.beginPath();
-        ctx.arc(cx, cy, Math.max(4, hexSize * 0.09), 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255,255,255,0.4)';
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(255,255,255,0.7)';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
+        if (isPlacingCity && current && inter.owner === current.color) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(cx, cy, Math.max(14, hexSize * 0.28), 0, Math.PI * 2);
+          ctx.strokeStyle = '#ffd54f';
+          ctx.lineWidth = 3;
+          ctx.stroke();
+          ctx.restore();
+        }
+      } else if (isPlacingSettlement && current) {
+        const validSpot = canPlaceSettlement(inter.key, gameState.intersections, gameState.edges)
+          && (isSetupSettlement || getEdgesForIntersection(inter.key, gameState.edges).some(e => e.road === current.color));
+        if (validSpot) {
+          ctx.beginPath();
+          ctx.arc(cx, cy, Math.max(6, hexSize * 0.115), 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(255, 224, 130, 0.55)';
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
       }
     });
 
@@ -1784,21 +1906,23 @@ export default function Board({
     // End board translate — tray sits on wood to the left of the island
     ctx.restore();
     drawPieceTray(ctx, gameState.players, hexSize, H);
-  }, [gameState, hexSize, CANVAS_W, CANVAS_H, BOARD_OX, selectedAction, assetsReady, debug, robberMode]);
+  }, [gameState, hexSize, CANVAS_W, CANVAS_H, BOARD_OX, selectedAction, assetsReady, debug, robberMode, isMyTurn]);
 
   const screenToCanvas = useCallback((screenX: number, screenY: number) => {
     const container = containerRef.current;
     if (!container) return { x: 0, y: 0 };
     const rect = container.getBoundingClientRect();
-    const canvasDisplayW = CANVAS_W * zoom;
-    const canvasDisplayH = CANVAS_H * zoom;
-    const offsetX = (rect.width - canvasDisplayW) / 2 + pan.x;
-    const offsetY = (rect.height - canvasDisplayH) / 2 + pan.y;
+    const z = zoomRef.current;
+    const p = panRef.current;
+    const canvasDisplayW = CANVAS_W * z;
+    const canvasDisplayH = CANVAS_H * z;
+    const offsetX = (rect.width - canvasDisplayW) / 2 + p.x;
+    const offsetY = (rect.height - canvasDisplayH) / 2 + p.y;
     return {
-      x: (screenX - rect.left - offsetX) / zoom,
-      y: (screenY - rect.top - offsetY) / zoom,
+      x: (screenX - rect.left - offsetX) / z,
+      y: (screenY - rect.top - offsetY) / z,
     };
-  }, [zoom, pan, CANVAS_W, CANVAS_H]);
+  }, [CANVAS_W, CANVAS_H]);
 
   const handleInteraction = useCallback((clientX: number, clientY: number) => {
     const { x, y } = screenToCanvas(clientX, clientY);
@@ -1806,11 +1930,12 @@ export default function Board({
     const H = CANVAS_H;
     // Board content is drawn translated by BOARD_OX
     const bx = x - BOARD_OX;
-    const clickThreshold = (gameState.setupPhase ? 22 : 16) / zoom;
+    const z = zoomRef.current;
+    const clickThreshold = Math.min(hexSize * 0.48, Math.max(18, 24 / z));
     const positions = posCache.current;
 
-    // Robber placement: hex wins over corners/edges so a tap on a tile
-    // doesn't get eaten by a nearby settlement vertex.
+    // 1. Robber placement: hex wins over corners/edges so a tap on a tile
+    //    doesn't get eaten by a nearby settlement vertex.
     if (robberMode) {
       const hex = pixelToHex(bx - W / 2, y - H / 2, hexSize);
       const tile = gameState.board.find(t => t.q === hex.q && t.r === hex.r);
@@ -1820,101 +1945,270 @@ export default function Board({
       }
     }
 
-    for (const inter of Object.values(gameState.intersections)) {
-      const pos = positions.get(inter.key);
-      if (!pos) continue;
-      if (Math.hypot(bx - (pos.x + W / 2), y - (pos.y + H / 2)) < clickThreshold) {
-        onIntersectionClick(inter.key);
+    const findNearestIntersection = (): string | null => {
+      let bestKey: string | null = null;
+      let bestDist = clickThreshold;
+      for (const inter of Object.values(gameState.intersections)) {
+        const pos = positions.get(inter.key);
+        if (!pos) continue;
+        const d = Math.hypot(bx - (pos.x + W / 2), y - (pos.y + H / 2));
+        if (d < bestDist) {
+          bestDist = d;
+          bestKey = inter.key;
+        }
+      }
+      return bestKey;
+    };
+
+    const findNearestEdge = (): string | null => {
+      let bestKey: string | null = null;
+      let bestDist = clickThreshold;
+      for (const edge of Object.values(gameState.edges)) {
+        const a = positions.get(edge.from);
+        const b = positions.get(edge.to);
+        if (!a || !b) continue;
+        const fx = a.x + W / 2, fy = a.y + H / 2, tx = b.x + W / 2, ty = b.y + H / 2;
+        const dx = tx - fx, dy = ty - fy;
+        const len2 = dx * dx + dy * dy || 1;
+        let t = ((bx - fx) * dx + (y - fy) * dy) / len2;
+        t = Math.max(0, Math.min(1, t));
+        const d = Math.hypot(bx - (fx + t * dx), y - (fy + t * dy));
+        if (d < bestDist) {
+          bestDist = d;
+          bestKey = edge.key;
+        }
+      }
+      return bestKey;
+    };
+
+    // Prioritize edges when placing a road so taps near corners don't get eaten
+    const roadMode = (gameState.setupPhase && gameState.phase === 'setup_road')
+      || selectedAction === 'road'
+      || (gameState.pendingDevAction === 'road_building' && gameState.pendingDevRoads > 0);
+
+    if (roadMode) {
+      const edgeKey = findNearestEdge();
+      if (edgeKey) {
+        onEdgeClick(edgeKey);
         return;
       }
     }
-    for (const edge of Object.values(gameState.edges)) {
-      const a = positions.get(edge.from);
-      const b = positions.get(edge.to);
-      if (!a || !b) continue;
-      const fx = a.x + W / 2, fy = a.y + H / 2, tx = b.x + W / 2, ty = b.y + H / 2;
-      const dx = tx - fx, dy = ty - fy;
-      const len2 = dx * dx + dy * dy || 1;
-      let t = ((bx - fx) * dx + (y - fy) * dy) / len2;
-      t = Math.max(0, Math.min(1, t));
-      if (Math.hypot(bx - (fx + t * dx), y - (fy + t * dy)) < clickThreshold) {
-        onEdgeClick(edge.key);
-        return;
-      }
+
+    const interKey = findNearestIntersection();
+    if (interKey) {
+      onIntersectionClick(interKey);
+      return;
     }
+
+    const edgeKey = findNearestEdge();
+    if (edgeKey) {
+      onEdgeClick(edgeKey);
+      return;
+    }
+
     const hex = pixelToHex(bx - W / 2, y - H / 2, hexSize);
     if (gameState.board.find(t => t.q === hex.q && t.r === hex.r)) onHexClick(hex.q, hex.r);
-  }, [gameState, hexSize, CANVAS_W, CANVAS_H, BOARD_OX, screenToCanvas, onIntersectionClick, onEdgeClick, onHexClick, zoom, robberMode]);
+  }, [gameState, hexSize, CANVAS_W, CANVAS_H, BOARD_OX, screenToCanvas, onIntersectionClick, onEdgeClick, onHexClick, robberMode, selectedAction]);
+
+  const handleInteractionRef = useRef(handleInteraction);
+  useEffect(() => {
+    handleInteractionRef.current = handleInteraction;
+  }, [handleInteraction]);
+
+  // Native non-passive touch & wheel listeners so pinch-to-zoom and panning
+  // never fight browser gestures or suffer from React batching / stale refs.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const midpointRelative = (t0: Touch, t1: Touch) => {
+      const rect = el.getBoundingClientRect();
+      return {
+        mx: (t0.clientX + t1.clientX) / 2 - (rect.left + rect.width / 2),
+        my: (t0.clientY + t1.clientY) / 2 - (rect.top + rect.height / 2),
+      };
+    };
+
+    const startPinch = (t0: Touch, t1: Touch) => {
+      const dist = Math.max(10, Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY));
+      const { mx, my } = midpointRelative(t0, t1);
+      pinchStart.current = {
+        dist,
+        zoom: zoomRef.current,
+        panX: panRef.current.x,
+        panY: panRef.current.y,
+        midX: mx,
+        midY: my,
+      };
+      dragStart.current = null;
+      dragPanStart.current = null;
+      gestureWasMultiTouch.current = true;
+      didPan.current = true;
+    };
+
+    const onTouchStart = (e: TouchEvent) => {
+      lastTouchTime.current = Date.now();
+      if (e.touches.length === 1) {
+        dragStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        dragPanStart.current = { ...panRef.current };
+        pinchStart.current = null;
+        didPan.current = false;
+        gestureWasMultiTouch.current = false;
+      } else if (e.touches.length >= 2) {
+        e.preventDefault();
+        startPinch(e.touches[0], e.touches[1]);
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      lastTouchTime.current = Date.now();
+      if (e.touches.length >= 2) {
+        e.preventDefault();
+        if (!pinchStart.current) {
+          startPinch(e.touches[0], e.touches[1]);
+          return;
+        }
+        const t0 = e.touches[0];
+        const t1 = e.touches[1];
+        const dist = Math.max(10, Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY));
+        const { mx, my } = midpointRelative(t0, t1);
+        const start = pinchStart.current;
+        const targetZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, start.zoom * (dist / start.dist)));
+        const ratio = targetZoom / start.zoom;
+        const nextPanX = mx - (start.midX - start.panX) * ratio;
+        const nextPanY = my - (start.midY - start.panY) * ratio;
+        userTransformedRef.current = true;
+        didPan.current = true;
+        gestureWasMultiTouch.current = true;
+        applyTransform(targetZoom, { x: nextPanX, y: nextPanY });
+      } else if (e.touches.length === 1 && dragStart.current && dragPanStart.current) {
+        const dx = e.touches[0].clientX - dragStart.current.x;
+        const dy = e.touches[0].clientY - dragStart.current.y;
+        if (didPan.current || Math.hypot(dx, dy) > 6) {
+          e.preventDefault();
+          didPan.current = true;
+          userTransformedRef.current = true;
+          applyTransform(zoomRef.current, {
+            x: dragPanStart.current.x + dx,
+            y: dragPanStart.current.y + dy,
+          });
+        }
+      }
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      lastTouchTime.current = Date.now();
+      if (e.touches.length >= 2) {
+        // Still 2+ fingers down — re-anchor pinch to avoid jump
+        startPinch(e.touches[0], e.touches[1]);
+        return;
+      }
+      if (e.touches.length === 1) {
+        // Transitioned from 2 fingers down to 1 finger — continue panning smoothly
+        // without jumping, and keep tap suppressed until all fingers lift.
+        pinchStart.current = null;
+        dragStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        dragPanStart.current = { ...panRef.current };
+        gestureWasMultiTouch.current = true;
+        didPan.current = true;
+        return;
+      }
+      // All fingers lifted
+      if (!didPan.current && !gestureWasMultiTouch.current && e.changedTouches[0]) {
+        e.preventDefault(); // suppress delayed synthetic mouse click
+        handleInteractionRef.current(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
+      }
+      dragStart.current = null;
+      dragPanStart.current = null;
+      pinchStart.current = null;
+      didPan.current = false;
+      gestureWasMultiTouch.current = false;
+    };
+
+    const onTouchCancel = () => {
+      dragStart.current = null;
+      dragPanStart.current = null;
+      pinchStart.current = null;
+      didPan.current = false;
+      gestureWasMultiTouch.current = false;
+    };
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const mx = e.clientX - (rect.left + rect.width / 2);
+      const my = e.clientY - (rect.top + rect.height / 2);
+      const curZoom = zoomRef.current;
+      const curPan = panRef.current;
+      const factor = e.deltaY > 0 ? 0.9 : 1.1;
+      const targetZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, curZoom * factor));
+      const ratio = targetZoom / curZoom;
+      userTransformedRef.current = true;
+      applyTransform(targetZoom, {
+        x: mx - (mx - curPan.x) * ratio,
+        y: my - (my - curPan.y) * ratio,
+      });
+    };
+
+    el.addEventListener('touchstart', onTouchStart, { passive: false });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    el.addEventListener('touchend', onTouchEnd, { passive: false });
+    el.addEventListener('touchcancel', onTouchCancel, { passive: true });
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('touchcancel', onTouchCancel);
+      el.removeEventListener('wheel', onWheel);
+    };
+  }, [applyTransform]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if (Date.now() - lastTouchTime.current < 500) return;
     dragStart.current = { x: e.clientX, y: e.clientY };
-    dragPanStart.current = { ...pan };
+    dragPanStart.current = { ...panRef.current };
     didPan.current = false;
-  }, [pan]);
+  }, []);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (Date.now() - lastTouchTime.current < 500) return;
     if (!dragStart.current || !dragPanStart.current) return;
     const dx = e.clientX - dragStart.current.x;
     const dy = e.clientY - dragStart.current.y;
-    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+    if (didPan.current || Math.hypot(dx, dy) > 4) {
       didPan.current = true;
-      setPan({ x: dragPanStart.current.x + dx, y: dragPanStart.current.y + dy });
+      userTransformedRef.current = true;
+      applyTransform(zoomRef.current, {
+        x: dragPanStart.current.x + dx,
+        y: dragPanStart.current.y + dy,
+      });
     }
-  }, []);
+  }, [applyTransform]);
 
   const handleMouseUp = useCallback((e: React.MouseEvent) => {
+    if (Date.now() - lastTouchTime.current < 500) return;
     if (!didPan.current) handleInteraction(e.clientX, e.clientY);
     dragStart.current = null;
     dragPanStart.current = null;
     didPan.current = false;
   }, [handleInteraction]);
 
-  const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    if (e.touches.length === 1) {
-      lastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-      dragPanStart.current = { ...pan };
-      didPan.current = false;
-    } else if (e.touches.length === 2) {
-      lastPinchDist.current = Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY,
-      );
-    }
-  }, [pan]);
+  const zoomBy = useCallback((factor: number) => {
+    const curZoom = zoomRef.current;
+    const curPan = panRef.current;
+    const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, curZoom * factor));
+    const ratio = nextZoom / curZoom;
+    userTransformedRef.current = true;
+    applyTransform(nextZoom, { x: curPan.x * ratio, y: curPan.y * ratio });
+  }, [applyTransform]);
 
-  const handleTouchMove = useCallback((e: React.TouchEvent) => {
-    e.preventDefault();
-    if (e.touches.length === 1 && lastTouch.current && dragPanStart.current) {
-      const dx = e.touches[0].clientX - lastTouch.current.x;
-      const dy = e.touches[0].clientY - lastTouch.current.y;
-      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
-        didPan.current = true;
-        setPan({ x: dragPanStart.current.x + dx, y: dragPanStart.current.y + dy });
-      }
-    } else if (e.touches.length === 2 && lastPinchDist.current) {
-      const dist = Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY,
-      );
-      setZoom(z => Math.max(0.35, Math.min(2.8, z * (dist / lastPinchDist.current!))));
-      lastPinchDist.current = dist;
-      didPan.current = true;
-    }
-  }, []);
-
-  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
-    if (!didPan.current && e.changedTouches[0]) {
-      handleInteraction(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
-    }
-    lastTouch.current = null;
-    lastPinchDist.current = null;
-    didPan.current = false;
-  }, [handleInteraction]);
-
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    setZoom(z => Math.max(0.35, Math.min(2.8, z * (e.deltaY > 0 ? 0.9 : 1.1))));
-  }, []);
+  const resetView = useCallback(() => {
+    userTransformedRef.current = false;
+    const { z, p } = computeFitView();
+    fitZoomRef.current = z;
+    applyTransform(z, p);
+  }, [computeFitView, applyTransform]);
 
   return (
     <div style={styles.container}>
@@ -1925,20 +2219,23 @@ export default function Board({
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={() => { dragStart.current = null; }}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
-        onWheel={handleWheel}
       >
-        <div style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: 'center center', willChange: 'transform' }}>
+        <div
+          ref={stageRef}
+          style={{
+            transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
+            transformOrigin: 'center center',
+            willChange: 'transform',
+          }}
+        >
           <canvas ref={canvasRef} style={{ display: 'block', borderRadius: 4 }} />
         </div>
       </div>
       <div style={styles.zoomControls}>
-        <button type="button" style={styles.zoomBtn} onClick={() => setZoom(z => Math.min(2.8, z * 1.25))}>+</button>
+        <button type="button" style={styles.zoomBtn} onClick={() => zoomBy(1.25)} aria-label="Zoom in">+</button>
         <span style={styles.zoomLabel}>{Math.round(zoom * 100)}%</span>
-        <button type="button" style={styles.zoomBtn} onClick={() => setZoom(z => Math.max(0.35, z / 1.25))}>−</button>
-        <button type="button" style={styles.zoomBtn} onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}>⟲</button>
+        <button type="button" style={styles.zoomBtn} onClick={() => zoomBy(1 / 1.25)} aria-label="Zoom out">−</button>
+        <button type="button" style={styles.zoomBtn} onClick={resetView} aria-label="Fit board" title="Fit board">⟲</button>
       </div>
     </div>
   );
@@ -1946,14 +2243,14 @@ export default function Board({
 
 const styles: Record<string, React.CSSProperties> = {
   container: { position: 'relative', width: '100%', height: '100%', overflow: 'hidden', background: '#6F4420' },
-  viewport: { width: '100%', height: '100%', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', touchAction: 'none' },
+  viewport: { width: '100%', height: '100%', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', touchAction: 'none', userSelect: 'none' },
   zoomControls: {
-    position: 'absolute', bottom: 12, right: 12, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-    background: 'rgba(40,25,10,0.85)', borderRadius: 12, padding: 6, zIndex: 10, border: '1px solid rgba(255,220,150,0.2)',
+    position: 'absolute', bottom: 68, right: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+    background: 'rgba(40,25,10,0.88)', borderRadius: 12, padding: 5, zIndex: 10, border: '1px solid rgba(255,220,150,0.22)',
   },
   zoomBtn: {
-    width: 40, height: 40, border: '1px solid rgba(255,220,150,0.25)', borderRadius: 10, background: '#3d2814',
-    color: '#f5e6c8', fontSize: 20, fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+    width: 38, height: 38, border: '1px solid rgba(255,220,150,0.25)', borderRadius: 9, background: '#3d2814',
+    color: '#f5e6c8', fontSize: 19, fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
   },
-  zoomLabel: { fontSize: 10, color: '#c9b896', textAlign: 'center', minWidth: 36 },
+  zoomLabel: { fontSize: 10, color: '#c9b896', textAlign: 'center', minWidth: 36, fontVariantNumeric: 'tabular-nums' },
 };

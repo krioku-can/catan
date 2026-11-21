@@ -4,4 +4,6 @@ dist/
 .env.local
 *.tsbuildinfo
 *.pdf
+*.apk
+*.idsig
 lumi-memory-export.md

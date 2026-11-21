@@ -48,13 +48,21 @@ export function setServerChoice(c: ServerChoice): void {
   try { localStorage.setItem(CHOICE_KEY, c); } catch { /* ignore */ }
 }
 
+/** True when running inside the packaged Android/mobile WebView app. */
+export function isPackagedApp(): boolean {
+  if (typeof window === 'undefined') return false;
+  const host = window.location.hostname;
+  const proto = window.location.protocol;
+  const port = window.location.port;
+  return proto === 'file:' || proto === 'capacitor:' || (host === 'localhost' && !port);
+}
+
 /** Resolve the server URL for the current (persisted) choice. */
 export function getServerUrl(): string {
   if (typeof window !== 'undefined') {
     const host = window.location.hostname;
-    // Public family site: always Render. A leftover "Same WiFi" pick would
-    // try http://catan-lac.vercel.app:3001 and browsers block that on cellular.
-    if (host.endsWith('vercel.app') || host.endsWith('onrender.com') || !isLocalHost(host)) {
+    // Public family site or packaged mobile app: always use cloud Render server.
+    if (isPackagedApp() || host.endsWith('vercel.app') || host.endsWith('onrender.com') || !isLocalHost(host)) {
       return cloudUrl();
     }
   }

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="CatanTheme" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:colorBackground">#3a2412</item>
+        <item name="android:statusBarColor">#3a2412</item>
+        <item name="android:navigationBarColor">#1a1008</item>
+    </style>
+</resources>

@@ -1,12 +1,12 @@
 // Core game rules and state management
 
-import type { GameState, GameConfig, Player, PlayerColor, ResourceType, DevelopmentCard, HexTile, Edge } from './types';
+import type { GameState, GameConfig, Player, PlayerColor, ResourceType, DevelopmentCard, HexTile, Edge, Intersection } from './types';
 import { generateBoard, canPlaceSettlement, canPlaceRoad, getResourceProduction, getAdjacentIntersections, getEdgesForIntersection, getHexCorners, getPortRate } from './board';
 import { getTraits, loadStats, COLOR_PERSONALITY, type TraitWeights } from './personality';
 
 const RESOURCES: ResourceType[] = ['brick', 'lumber', 'wool', 'grain', 'ore'];
 
-const BUILDING_COSTS: Record<string, Partial<Record<ResourceType, number>>> = {
+export const BUILDING_COSTS: Record<string, Partial<Record<ResourceType, number>>> = {
   road: { lumber: 1, brick: 1 },
   settlement: { lumber: 1, brick: 1, wool: 1, grain: 1 },
   city: { grain: 2, ore: 3 },
@@ -276,7 +276,7 @@ export function aiRespondToPublicOffers(state: GameState): boolean {
       for (const [r, n] of Object.entries(offer.want || {})) {
         if ((p.resources[r as ResourceType] || 0) < (Number(n) || 0)) canPay = false;
       }
-      const favorable = canPay && (wantTotal >= giveTotal || (givesSurplus && getsScarce));
+      const favorable = canPay && (wantTotal <= giveTotal || (givesSurplus && getsScarce));
       respondToTrade(state, p.color, offer.from, favorable);
       changed = true;
     }
@@ -506,16 +506,28 @@ export function moveRobber(state: GameState, targetHexQ: number, targetHexR: num
     if (state.friendlyRobber && (target.victoryPoints || 0) <= 2) {
       // Friendly Robber: skip steal silently if target is protected
     } else {
-      const hasResources = RESOURCES.some((r: ResourceType) => (target.resources[r] || 0) > 0);
-      if (hasResources) {
-        const available = RESOURCES.filter((r: ResourceType) => (target.resources[r] || 0) > 0);
-        const stolen = available[Math.floor(Math.random() * available.length)];
+      const stolen = pickRandomCard(target.resources);
+      if (stolen) {
         target.resources[stolen]--;
         getCurrentPlayer(state).resources[stolen]++;
       }
     }
   }
 
+  return null;
+}
+
+/** Draw one card uniformly at random from a player's hand (weighted by card counts). */
+function pickRandomCard(resources: Record<ResourceType, number>): ResourceType | null {
+  let total = 0;
+  for (const r of RESOURCES) total += Math.max(0, resources[r] || 0);
+  if (total <= 0) return null;
+  let roll = Math.floor(Math.random() * total);
+  for (const r of RESOURCES) {
+    const n = Math.max(0, resources[r] || 0);
+    if (roll < n) return r;
+    roll -= n;
+  }
   return null;
 }
 
@@ -607,10 +619,8 @@ export function stealFrom(
   if (state.friendlyRobber && (t.victoryPoints || 0) <= 2) {
     return 'Friendly Robber: cannot steal from players with 2 VP or fewer';
   }
-  const hasResources = RESOURCES.some(r => (t.resources[r] || 0) > 0);
-  if (!hasResources) return 'Target has no resources';
-  const available = RESOURCES.filter(r => (t.resources[r] || 0) > 0);
-  const stolen = available[Math.floor(Math.random() * available.length)];
+  const stolen = pickRandomCard(t.resources);
+  if (!stolen) return 'Target has no resources';
   t.resources[stolen]--;
   getCurrentPlayer(state).resources[stolen]++;
   if (out) out.resource = stolen;
@@ -711,6 +721,7 @@ export function placeSettlement(state: GameState, intersectionKey: string): stri
   player.settlementsRemaining--;
   deductResources(player, BUILDING_COSTS.settlement);
   player.victoryPoints += 1;
+  updateLongestRoad(state);
 
   return null;
 }
@@ -841,7 +852,8 @@ export function playYearOfPlenty(state: GameState, res1: ResourceType, res2: Res
 
   card.played = true;
   player.devCardsPlayedThisTurn++;
-  addResources(player, { [res1]: 1, [res2]: 1 });
+  addResources(player, { [res1]: 1 });
+  addResources(player, { [res2]: 1 });
   return null;
 }
 
@@ -912,7 +924,9 @@ export function endTurn(state: GameState): void {
     return;
   }
 
-  state.currentTurn = (state.currentTurn + 1) % state.players.length;
+  const nextTurn = (state.currentTurn + 1) % state.players.length;
+  if (nextTurn === 0) state.round = (state.round || 0) + 1;
+  state.currentTurn = nextTurn;
   state.phase = 'roll';
 }
 
@@ -945,40 +959,47 @@ export function advanceSetup(state: GameState): void {
   state.phase = actionInRound === 0 ? 'setup_settlement' : 'setup_road';
 }
 
-// Calculate longest road for a player
-export function calculateLongestRoad(player: PlayerColor, edges: Record<string, Edge>): number {
-  // BFS from each road endpoint
+// Calculate longest continuous road for a player (edge-simple trail, broken by opponent settlements/cities)
+export function calculateLongestRoad(
+  player: PlayerColor,
+  edges: Record<string, Edge>,
+  intersections?: Record<string, Intersection>,
+): number {
   const playerEdges = Object.values(edges).filter(e => e.road === player);
-  if (playerEdges.length < 5) return 0;
+  if (playerEdges.length === 0) return 0;
+
+  // Build adjacency map: node -> list of { key, to }
+  const adj: Record<string, { key: string; to: string }[]> = {};
+  for (const e of playerEdges) {
+    if (!adj[e.from]) adj[e.from] = [];
+    if (!adj[e.to]) adj[e.to] = [];
+    adj[e.from].push({ key: e.key, to: e.to });
+    adj[e.to].push({ key: e.key, to: e.from });
+  }
 
   let maxLength = 0;
-  
-  // Build adjacency map for player's roads
-  const roadGraph: Record<string, string[]> = {};
-  playerEdges.forEach(e => {
-    if (!roadGraph[e.from]) roadGraph[e.from] = [];
-    if (!roadGraph[e.to]) roadGraph[e.to] = [];
-    roadGraph[e.from].push(e.to);
-    roadGraph[e.to].push(e.from);
-  });
+  const usedEdges = new Set<string>();
 
-  // DFS from each endpoint
-  for (const start of Object.keys(roadGraph)) {
-    const visited = new Set<string>();
-    const stack: { node: string; length: number }[] = [{ node: start, length: 0 }];
-    
-    while (stack.length > 0) {
-      const { node, length } = stack.pop()!;
-      if (visited.has(node)) continue;
-      visited.add(node);
-      maxLength = Math.max(maxLength, length);
-      
-      for (const next of (roadGraph[node] || [])) {
-        if (!visited.has(next)) {
-          stack.push({ node: next, length: length + 1 });
-        }
+  const dfs = (node: string, depth: number) => {
+    if (depth > maxLength) maxLength = depth;
+    const neighbors = adj[node];
+    if (!neighbors) return;
+    for (const { key, to } of neighbors) {
+      if (usedEdges.has(key)) continue;
+      usedEdges.add(key);
+      if (depth + 1 > maxLength) maxLength = depth + 1;
+      // Can end at an opponent's settlement/city, but cannot continue through it
+      const owner = intersections?.[to]?.owner;
+      const blocked = !!owner && owner !== player;
+      if (!blocked) {
+        dfs(to, depth + 1);
       }
+      usedEdges.delete(key);
     }
+  };
+
+  for (const start of Object.keys(adj)) {
+    dfs(start, 0);
   }
 
   return maxLength;
@@ -986,24 +1007,33 @@ export function calculateLongestRoad(player: PlayerColor, edges: Record<string, 
 
 function updateLongestRoad(state: GameState): void {
   let maxLength = 0;
-  let maxColor: PlayerColor | undefined;
-  let tie = false;
-  
+  const leaders: PlayerColor[] = [];
+
   for (const player of state.players) {
-    const length = calculateLongestRoad(player.color, state.edges);
+    const length = calculateLongestRoad(player.color, state.edges, state.intersections);
     if (length >= 5) {
       if (length > maxLength) {
         maxLength = length;
-        maxColor = player.color;
-        tie = false;
+        leaders.length = 0;
+        leaders.push(player.color);
       } else if (length === maxLength) {
-        // Official rule: a tie for longest road means nobody holds it.
-        tie = true;
+        leaders.push(player.color);
       }
     }
   }
-  // If there's a tie at the max length, nobody gets the bonus.
-  if (tie) maxColor = undefined;
+
+  let maxColor: PlayerColor | undefined;
+  if (leaders.length === 1) {
+    maxColor = leaders[0];
+  } else if (leaders.length > 1) {
+    // Official rule: current holder keeps Longest Road on a tie;
+    // if broken and two non-holders tie, nobody holds it.
+    if (state.longestRoad.color && leaders.includes(state.longestRoad.color)) {
+      maxColor = state.longestRoad.color;
+    } else {
+      maxColor = undefined;
+    }
+  }
 
   // Remove old longest road bonus
   if (state.longestRoad.color && state.longestRoad.color !== maxColor) {
@@ -1090,7 +1120,7 @@ function pickFromRanked<T>(ranked: T[], level: Player['aiLevel']): T {
   return ranked[Math.floor(Math.random() * n)];
 }
 
-function settlementCandidates(state: GameState, color: PlayerColor) {
+export function settlementCandidates(state: GameState, color: PlayerColor) {
   return Object.values(state.intersections).filter(i => {
     if (i.building) return false;
     if (!canPlaceSettlement(i.key, state.intersections, state.edges)) return false;
@@ -1099,13 +1129,13 @@ function settlementCandidates(state: GameState, color: PlayerColor) {
   });
 }
 
-function cityCandidates(state: GameState, color: PlayerColor) {
+export function cityCandidates(state: GameState, color: PlayerColor) {
   return Object.values(state.intersections).filter(
     i => i.building === 'settlement' && i.owner === color,
   );
 }
 
-function roadCandidates(state: GameState, color: PlayerColor) {
+export function roadCandidates(state: GameState, color: PlayerColor) {
   return Object.values(state.edges).filter(
     e => !e.road && canPlaceRoad(e.key, color, state.edges, state.intersections),
   );
@@ -1128,7 +1158,7 @@ function scoreRoad(state: GameState, edge: Edge, color: PlayerColor): number {
       }
     }
   }
-  const myLen = calculateLongestRoad(color, { ...state.edges, [edge.key]: { ...edge, road: color } });
+  const myLen = calculateLongestRoad(color, { ...state.edges, [edge.key]: { ...edge, road: color } }, state.intersections);
   const held = state.longestRoad.length || 0;
   if (myLen >= 5 && myLen > held) score += 18;
   else if (state.longestRoad.color && state.longestRoad.color !== color && myLen >= held - 1) score += 8;
@@ -1397,7 +1427,7 @@ export function aiTurn(state: GameState): { action: string; data?: any } | null 
     if (rb && player.roadsRemaining > 0) {
       const roads = roadCandidates(state, player.color);
       const wouldSettle = roads.some(e => scoreRoad(state, e, player.color) >= 12);
-      const myLen = calculateLongestRoad(player.color, state.edges);
+      const myLen = calculateLongestRoad(player.color, state.edges, state.intersections);
       const stealRoad = myLen >= 3 && (state.longestRoad.color !== player.color);
       if (wouldSettle || stealRoad) {
         const err = playRoadBuilding(state);
