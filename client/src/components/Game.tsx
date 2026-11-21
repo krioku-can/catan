@@ -3,7 +3,7 @@ import type { GameState, GameConfig, PlayerColor, ResourceType } from '../game/t
 import { createInitialState, getCurrentPlayer, getPlayerByColor, executeBankTrade, proposePublicTrade, respondToTrade, completeTradeWith, cancelTradeOffer, aiRespondToPublicOffers, rollDice, rollTurnOrder, placeSetupSettlement, placeSetupRoad, advanceSetup, placeRoad, placeSettlement, placeCity, buyDevCard, endTurn, aiTurn, moveRobber, playKnight, discardResources, playRoadBuilding, playYearOfPlenty, playMonopoly, countHeldDevCards, getStealTargets, stealFrom, checkVictory, canAfford, BUILDING_COSTS } from '../game/rules'
 import { PERSONALITIES, learnFromGame } from '../game/personality';
 import { llmChooseAction } from '../game/llmAI';
-import Board from './Board';
+import Board, { type PendingPlacement } from './Board';
 import PlayerHand from './PlayerHand';
 import DiceRoller from './DiceRoller';
 import DiceFlash from './DiceFlash';
@@ -56,6 +56,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [_config, _setConfig] = useState<GameConfig | null>(null);
   const [selectedAction, setSelectedAction] = useState<string | null>(null);
+  const [pendingPlacement, setPendingPlacement] = useState<PendingPlacement | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [showSetup, setShowSetup] = useState(!quickStart);
   const [diceRolling, setDiceRolling] = useState(false);
@@ -400,6 +401,77 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     }
   }, [gameState, robberMode, addLog]);
 
+  // Clear ghost preview whenever turn, phase, or selectedAction changes
+  useEffect(() => {
+    setPendingPlacement(null);
+  }, [gameState?.currentTurn, gameState?.phase, selectedAction, robberMode]);
+
+  const commitPlacement = useCallback((p: PendingPlacement) => {
+    if (!gameState || robberMode || pendingSteal) return;
+    const player = getCurrentPlayer(gameState);
+    if (player.isAI) return;
+
+    if (p.kind === 'settlement') {
+      if (gameState.setupPhase) {
+        const err = placeSetupSettlement(gameState, p.key);
+        if (err === null) {
+          sfx.build();
+          addLog(`${player.name} placed a settlement`);
+          advanceSetup(gameState);
+          setPendingPlacement(null);
+          setGameState({ ...gameState });
+        }
+      } else {
+        const err = placeSettlement(gameState, p.key);
+        if (err === null) {
+          sfx.build();
+          addLog(`${player.name} built a settlement`);
+          setPendingPlacement(null);
+          setSelectedAction(null);
+          setGameState({ ...gameState });
+        }
+      }
+      return;
+    }
+
+    if (p.kind === 'city') {
+      const err = placeCity(gameState, p.key);
+      if (err === null) {
+        sfx.build();
+        addLog(`${player.name} upgraded to a city`);
+        setPendingPlacement(null);
+        setSelectedAction(null);
+        setGameState({ ...gameState });
+      }
+      return;
+    }
+
+    if (p.kind === 'road') {
+      if (gameState.setupPhase) {
+        const err = placeSetupRoad(gameState, p.key);
+        if (err === null) {
+          sfx.road();
+          addLog(`${player.name} placed a road`);
+          advanceSetup(gameState);
+          setPendingPlacement(null);
+          setGameState({ ...gameState });
+        }
+      } else {
+        const freeRoads = gameState.pendingDevAction === 'road_building' && gameState.pendingDevRoads > 0;
+        const err = placeRoad(gameState, p.key);
+        if (err === null) {
+          sfx.road();
+          addLog(freeRoads
+            ? `${player.name} placed a free road (${gameState.pendingDevRoads} left)`
+            : `${player.name} built a road`);
+          setPendingPlacement(null);
+          if (!freeRoads || gameState.pendingDevRoads <= 0) setSelectedAction(null);
+          setGameState({ ...gameState });
+        }
+      }
+    }
+  }, [gameState, robberMode, pendingSteal, addLog]);
+
   const handleIntersectionClick = useCallback((key: string) => {
     if (!gameState || robberMode || pendingSteal) return;
     const player = getCurrentPlayer(gameState);
@@ -408,13 +480,12 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     if (gameState.setupPhase) {
       if (gameState.phase === 'setup_settlement') {
         if (!canPlaceSettlement(key, gameState.intersections, gameState.edges)) return;
-        if (!window.confirm('Place settlement on this corner?')) return;
-        const err = placeSetupSettlement(gameState, key);
-        if (err === null) {
-          sfx.build();
-          addLog(`${player.name} placed a settlement`);
-          advanceSetup(gameState);
-          setGameState({ ...gameState });
+        const next: PendingPlacement = { kind: 'settlement', key, label: 'Place Settlement' };
+        if (pendingPlacement?.kind === 'settlement' && pendingPlacement.key === key) {
+          commitPlacement(next);
+        } else {
+          sfx.click();
+          setPendingPlacement(next);
         }
       }
       return;
@@ -427,13 +498,12 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           && canPlaceSettlement(key, gameState.intersections, gameState.edges)
           && getEdgesForIntersection(key, gameState.edges).some(e => e.road === player.color);
         if (!valid) return;
-        if (!window.confirm('Place settlement on this corner?')) return;
-        const err = placeSettlement(gameState, key);
-        if (err === null) {
-          sfx.build();
-          addLog(`${player.name} built a settlement`);
-          setSelectedAction(null);
-          setGameState({ ...gameState });
+        const next: PendingPlacement = { kind: 'settlement', key, label: 'Build Settlement' };
+        if (pendingPlacement?.kind === 'settlement' && pendingPlacement.key === key) {
+          commitPlacement(next);
+        } else {
+          sfx.click();
+          setPendingPlacement(next);
         }
       } else if (selectedAction === 'city') {
         const inter = gameState.intersections[key];
@@ -442,17 +512,16 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           && inter?.building === 'settlement'
           && inter.owner === player.color;
         if (!valid) return;
-        if (!window.confirm('Upgrade this settlement to a city?')) return;
-        const err = placeCity(gameState, key);
-        if (err === null) {
-          sfx.build();
-          addLog(`${player.name} upgraded to a city`);
-          setSelectedAction(null);
-          setGameState({ ...gameState });
+        const next: PendingPlacement = { kind: 'city', key, label: 'Upgrade to City' };
+        if (pendingPlacement?.kind === 'city' && pendingPlacement.key === key) {
+          commitPlacement(next);
+        } else {
+          sfx.click();
+          setPendingPlacement(next);
         }
       }
     }
-  }, [gameState, selectedAction, addLog, robberMode, pendingSteal]);
+  }, [gameState, selectedAction, robberMode, pendingSteal, pendingPlacement, commitPlacement]);
 
   const handleEdgeClick = useCallback((key: string) => {
     if (!gameState || robberMode || pendingSteal) return;
@@ -471,13 +540,12 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
               && !Object.values(gameState.edges).some(e => e.road === player.color && (e.from === i.key || e.to === i.key))
             )?.key ?? null;
         if (!justPlaced || (edge.from !== justPlaced && edge.to !== justPlaced)) return;
-        if (!window.confirm('Place road on this edge?')) return;
-        const err = placeSetupRoad(gameState, key);
-        if (err === null) {
-          sfx.road();
-          addLog(`${player.name} placed a road`);
-          advanceSetup(gameState);
-          setGameState({ ...gameState });
+        const next: PendingPlacement = { kind: 'road', key, label: 'Place Road' };
+        if (pendingPlacement?.kind === 'road' && pendingPlacement.key === key) {
+          commitPlacement(next);
+        } else {
+          sfx.click();
+          setPendingPlacement(next);
         }
       }
       return;
@@ -490,18 +558,15 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
         && (freeRoads || canAfford(player, BUILDING_COSTS.road))
         && canPlaceRoad(key, player.color, gameState.edges, gameState.intersections);
       if (!valid) return;
-      if (!window.confirm(freeRoads ? 'Place free road on this edge?' : 'Build road on this edge?')) return;
-      const err = placeRoad(gameState, key);
-      if (err === null) {
-        sfx.road();
-        addLog(freeRoads
-          ? `${player.name} placed a free road (${gameState.pendingDevRoads} left)`
-          : `${player.name} built a road`);
-        if (!freeRoads || gameState.pendingDevRoads <= 0) setSelectedAction(null);
-        setGameState({ ...gameState });
+      const next: PendingPlacement = { kind: 'road', key, label: freeRoads ? 'Place Free Road' : 'Build Road' };
+      if (pendingPlacement?.kind === 'road' && pendingPlacement.key === key) {
+        commitPlacement(next);
+      } else {
+        sfx.click();
+        setPendingPlacement(next);
       }
     }
-  }, [gameState, selectedAction, addLog, robberMode, pendingSteal]);
+  }, [gameState, selectedAction, robberMode, pendingSteal, pendingPlacement, commitPlacement]);
 
   const handleTurnOrder = useCallback(() => {
     if (!gameState) return;
@@ -809,6 +874,9 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           robberMode={robberMode}
           selectedAction={selectedAction}
           isMyTurn={isMyTurn}
+          pendingPlacement={pendingPlacement}
+          onConfirmPlacement={() => pendingPlacement && commitPlacement(pendingPlacement)}
+          onCancelPlacement={() => setPendingPlacement(null)}
           debug={debug}
         />
         <DiceFlash

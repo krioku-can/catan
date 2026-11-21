@@ -1,8 +1,9 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useSocket } from '../hooks/useSocket';
-import { getCurrentPlayer } from '../game/rules';
+import { getCurrentPlayer, canAfford, BUILDING_COSTS } from '../game/rules';
+import { canPlaceSettlement, canPlaceRoad, getEdgesForIntersection } from '../game/board';
 import type { ResourceType, PlayerColor } from '../game/types';
-import Board from './Board';
+import Board, { type PendingPlacement } from './Board';
 import PlayerHand from './PlayerHand';
 import DiceRoller from './DiceRoller';
 import DiceFlash from './DiceFlash';
@@ -26,6 +27,7 @@ const HEX_SIZE = 68;
 export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void }) {
   const { gameState, playerId, room, sendAction, sendChat, chatMessages, leaveRoom, lastActionResult, turnTimer } = useSocket();
   const [selectedAction, setSelectedAction] = useState<string | null>(null);
+  const [pendingPlacement, setPendingPlacement] = useState<PendingPlacement | null>(null);
   const [robberMode, setRobberMode] = useState(false);
   const [stealTargets, setStealTargets] = useState<PlayerColor[]>([]);
   const [pendingSteal, setPendingSteal] = useState<{ q: number; r: number } | null>(null);
@@ -180,30 +182,123 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
     setStealTargets([]);
   }, [gameState, sendAction]);
 
+  useEffect(() => {
+    setPendingPlacement(null);
+  }, [gameState?.currentTurn, gameState?.phase, selectedAction, robberMode]);
+
+  const commitPlacement = useCallback((p: PendingPlacement) => {
+    if (!gameState) return;
+    if (p.kind === 'settlement') {
+      sendAction('place_settlement', { key: p.key });
+      setPendingPlacement(null);
+      if (!gameState.setupPhase) setSelectedAction(null);
+    } else if (p.kind === 'city') {
+      sendAction('place_city', { key: p.key });
+      setPendingPlacement(null);
+      setSelectedAction(null);
+    } else if (p.kind === 'road') {
+      const freeRoads = gameState.pendingDevAction === 'road_building' && (gameState.pendingDevRoads || 0) > 0;
+      sendAction('place_road', { key: p.key });
+      setPendingPlacement(null);
+      if (!freeRoads && !gameState.setupPhase) setSelectedAction(null);
+    }
+  }, [gameState, sendAction]);
+
   const handleIntersectionClick = useCallback((key: string) => {
     setOrderFlash(null);
-    if (gameState?.setupPhase && gameState.phase === 'setup_settlement') {
-      sendAction('place_settlement', { key });
+    if (!gameState || !room || robberMode || (pendingSteal && stealTargets.length > 0)) return;
+    const myColor = room.players.find(rp => rp.playerId === playerId)?.color;
+    const current = getCurrentPlayer(gameState);
+    if (!myColor || current.color !== myColor) return;
+
+    if (gameState.setupPhase && gameState.phase === 'setup_settlement') {
+      if (!canPlaceSettlement(key, gameState.intersections, gameState.edges)) return;
+      const next: PendingPlacement = { kind: 'settlement', key, label: 'Place Settlement' };
+      if (pendingPlacement?.kind === 'settlement' && pendingPlacement.key === key) {
+        commitPlacement(next);
+      } else {
+        sfx.click();
+        setPendingPlacement(next);
+      }
       return;
     }
-    if (selectedAction === 'settlement') {
-      sendAction('place_settlement', { key });
-      setSelectedAction(null);
-    } else if (selectedAction === 'city') {
-      sendAction('place_city', { key });
-      setSelectedAction(null);
+
+    if (gameState.phase === 'build' || gameState.phase === 'trade') {
+      if (selectedAction === 'settlement') {
+        const valid = current.settlementsRemaining > 0
+          && canAfford(current, BUILDING_COSTS.settlement)
+          && canPlaceSettlement(key, gameState.intersections, gameState.edges)
+          && getEdgesForIntersection(key, gameState.edges).some(e => e.road === current.color);
+        if (!valid) return;
+        const next: PendingPlacement = { kind: 'settlement', key, label: 'Build Settlement' };
+        if (pendingPlacement?.kind === 'settlement' && pendingPlacement.key === key) {
+          commitPlacement(next);
+        } else {
+          sfx.click();
+          setPendingPlacement(next);
+        }
+      } else if (selectedAction === 'city') {
+        const inter = gameState.intersections[key];
+        const valid = current.citiesRemaining > 0
+          && canAfford(current, BUILDING_COSTS.city)
+          && inter?.building === 'settlement'
+          && inter.owner === current.color;
+        if (!valid) return;
+        const next: PendingPlacement = { kind: 'city', key, label: 'Upgrade to City' };
+        if (pendingPlacement?.kind === 'city' && pendingPlacement.key === key) {
+          commitPlacement(next);
+        } else {
+          sfx.click();
+          setPendingPlacement(next);
+        }
+      }
     }
-  }, [selectedAction, sendAction, gameState]);
+  }, [selectedAction, gameState, room, playerId, robberMode, pendingSteal, stealTargets.length, pendingPlacement, commitPlacement]);
 
   const handleEdgeClick = useCallback((key: string) => {
     setOrderFlash(null);
-    const setupRoad = !!gameState?.setupPhase && gameState.phase === 'setup_road';
-    const freeRoads = gameState?.pendingDevAction === 'road_building' && (gameState?.pendingDevRoads || 0) > 0;
-    if (setupRoad || freeRoads || selectedAction === 'road') {
-      sendAction('place_road', { key });
-      if (!freeRoads && !setupRoad) setSelectedAction(null);
+    if (!gameState || !room || robberMode || (pendingSteal && stealTargets.length > 0)) return;
+    const myColor = room.players.find(rp => rp.playerId === playerId)?.color;
+    const current = getCurrentPlayer(gameState);
+    if (!myColor || current.color !== myColor) return;
+
+    const setupRoad = !!gameState.setupPhase && gameState.phase === 'setup_road';
+    if (setupRoad) {
+      const edge = gameState.edges[key];
+      if (!edge || edge.road) return;
+      const tagged = gameState.lastSetupSettlement;
+      const justPlaced = (tagged && gameState.intersections[tagged]?.owner === current.color)
+        ? tagged
+        : Object.values(gameState.intersections).find(i =>
+            i.owner === current.color && i.building
+            && !Object.values(gameState.edges).some(e => e.road === current.color && (e.from === i.key || e.to === i.key))
+          )?.key ?? null;
+      if (!justPlaced || (edge.from !== justPlaced && edge.to !== justPlaced)) return;
+      const next: PendingPlacement = { kind: 'road', key, label: 'Place Road' };
+      if (pendingPlacement?.kind === 'road' && pendingPlacement.key === key) {
+        commitPlacement(next);
+      } else {
+        sfx.click();
+        setPendingPlacement(next);
+      }
+      return;
     }
-  }, [selectedAction, sendAction, gameState]);
+
+    const freeRoads = gameState.pendingDevAction === 'road_building' && (gameState.pendingDevRoads || 0) > 0;
+    if (freeRoads || ((gameState.phase === 'build' || gameState.phase === 'trade') && selectedAction === 'road')) {
+      const valid = current.roadsRemaining > 0
+        && (freeRoads || canAfford(current, BUILDING_COSTS.road))
+        && canPlaceRoad(key, current.color, gameState.edges, gameState.intersections);
+      if (!valid) return;
+      const next: PendingPlacement = { kind: 'road', key, label: freeRoads ? 'Place Free Road' : 'Build Road' };
+      if (pendingPlacement?.kind === 'road' && pendingPlacement.key === key) {
+        commitPlacement(next);
+      } else {
+        sfx.click();
+        setPendingPlacement(next);
+      }
+    }
+  }, [selectedAction, gameState, room, playerId, robberMode, pendingSteal, stealTargets.length, pendingPlacement, commitPlacement]);
 
   const handleRollDice = useCallback(() => {
     sendAction('roll_dice');
@@ -426,6 +521,9 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
           robberMode={robberMode}
           selectedAction={selectedAction}
           isMyTurn={isMyTurn}
+          pendingPlacement={pendingPlacement}
+          onConfirmPlacement={() => pendingPlacement && commitPlacement(pendingPlacement)}
+          onCancelPlacement={() => setPendingPlacement(null)}
           debug={debug}
         />
         <DiceFlash
