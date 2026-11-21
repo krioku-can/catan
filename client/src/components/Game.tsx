@@ -17,10 +17,11 @@ import DiscardModal from './DiscardModal';
 import DevCardPanel from './DevCardPanel';
 import TurnCoach from './TurnCoach';
 import DevCardReveal from './DevCardReveal';
+import AudioControl from './AudioControl';
 import { recordGame } from '../stats';
 import { getPortRate, canPlaceSettlement, canPlaceRoad, getEdgesForIntersection } from '../game/board';
 import { setStored, getStored } from '../storage';
-import { unlockAudio, sfx, isMuted, setMuted } from '../audio';
+import { unlockAudio, sfx, setAudioScene } from '../audio';
 import { getTurnCoach } from '../turnCoach';
 
 const HEX_SIZE = 68;
@@ -68,24 +69,30 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
   const [devReveal, setDevReveal] = useState<{ type?: string | null; buyerName?: string } | null>(null);
   const [debug, setDebug] = useState(() => new URLSearchParams(window.location.search).get('debug') === '1');
   const [turnOrderRolls, setTurnOrderRolls] = useState<Record<string, number> | null>(null);
-  const [muted, setMutedState] = useState(() => isMuted());
   const [aiSpeed, setAiSpeedState] = useState<AiSpeed>(() => loadAiSpeed());
   const startedRef = useRef(false);
   const statsRecordedRef = useRef(false);
   const learnedRef = useRef(false);
   const lastTurnColorRef = useRef<string | null>(null);
+  const lastAwardsRef = useRef<{ init: boolean; lr?: string; la?: string }>({ init: false });
 
   const setAiSpeed = useCallback((s: AiSpeed) => {
     setAiSpeedState(s);
     setStored('catan_ai_speed', s);
   }, []);
 
-  // Unlock Web Audio on first pointer so SFX work on mobile
+  // Unlock Web Audio on first pointer so SFX, music & ambience work on mobile
   useEffect(() => {
     const unlock = () => unlockAudio();
     window.addEventListener('pointerdown', unlock, { once: true });
     return () => window.removeEventListener('pointerdown', unlock);
   }, []);
+
+  // Switch between menu (quiet) and active tabletop island music + coastal waves
+  useEffect(() => {
+    setAudioScene(!showSetup && !!gameState ? 'game' : 'menu');
+    return () => setAudioScene('menu');
+  }, [showSetup, gameState]);
 
   // Your-turn chime when control passes to the human
   useEffect(() => {
@@ -96,8 +103,29 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     if (prev && prev !== cur.color && !cur.isAI) sfx.yourTurn();
   }, [gameState?.currentTurn, gameState?.phase]);
 
+  // Fanfare whenever Longest Road or Largest Army changes hands
   useEffect(() => {
-    if (gameState?.winner) sfx.win();
+    if (!gameState) {
+      lastAwardsRef.current = { init: false };
+      return;
+    }
+    const lr = gameState.longestRoad?.color;
+    const la = gameState.largestArmy?.color;
+    if (!lastAwardsRef.current.init) {
+      lastAwardsRef.current = { init: true, lr, la };
+      return;
+    }
+    if ((lr && lr !== lastAwardsRef.current.lr) || (la && la !== lastAwardsRef.current.la)) {
+      sfx.award();
+    }
+    lastAwardsRef.current = { init: true, lr, la };
+  }, [gameState?.longestRoad?.color, gameState?.largestArmy?.color]);
+
+  useEffect(() => {
+    if (!gameState?.winner) return;
+    const humanWon = gameState.players.some(p => !p.isAI && p.color === gameState.winner);
+    if (humanWon) sfx.win();
+    else sfx.lose();
   }, [gameState?.winner]);
 
   useEffect(() => {
@@ -239,6 +267,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
             if (aiSpeed !== 'instant') {
               setDiceFlash({ total: d1 + d2, faces: [d1, d2] });
               sfx.dice();
+              if (d1 + d2 === 7) window.setTimeout(() => sfx.robber(), 220);
             }
             if (d1 + d2 === 7) {
               let guard = 0;
@@ -269,6 +298,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
             if (gameState.setupPhase) {
               const err = placeSetupSettlement(gameState, action.data.key);
               if (err === null) {
+                if (aiSpeed !== 'instant') sfx.settlement();
                 advanceSetup(gameState);
                 addLog(`${current.name} placed a settlement`);
               } else {
@@ -276,13 +306,17 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
               }
             } else {
               const err = placeSettlement(gameState, action.data.key);
-              if (err === null) addLog(`${current.name} placed a settlement`);
+              if (err === null) {
+                if (aiSpeed !== 'instant') sfx.settlement();
+                addLog(`${current.name} placed a settlement`);
+              }
             }
             break;
           case 'place_road':
             if (gameState.setupPhase) {
               const err = placeSetupRoad(gameState, action.data.key);
               if (err === null) {
+                if (aiSpeed !== 'instant') sfx.road();
                 advanceSetup(gameState);
                 addLog(`${current.name} placed a road`);
               } else {
@@ -290,17 +324,24 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
               }
             } else {
               const err = placeRoad(gameState, action.data.key);
-              if (err === null) addLog(`${current.name} placed a road`);
+              if (err === null) {
+                if (aiSpeed !== 'instant') sfx.road();
+                addLog(`${current.name} placed a road`);
+              }
             }
             break;
           case 'place_city': {
             const err = placeCity(gameState, action.data.key);
-            if (err === null) addLog(`${current.name} built a city`);
+            if (err === null) {
+              if (aiSpeed !== 'instant') sfx.city();
+              addLog(`${current.name} built a city`);
+            }
             break;
           }
           case 'buy_dev_card': {
             const card = buyDevCard(gameState);
             if (card) {
+              if (aiSpeed !== 'instant') sfx.devCard();
               addLog(`${current.name} bought a development card`);
               setDevReveal({ buyerName: current.name });
             }
@@ -312,7 +353,10 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
               const get = action.data.get as ResourceType;
               const rate = getPortRate(current.color, give, gameState.ports, gameState.intersections);
               const err = executeBankTrade(gameState, give, rate, get);
-              if (err === null) addLog(`${current.name} bank-traded ${rate} ${give} → 1 ${get}`);
+              if (err === null) {
+                if (aiSpeed !== 'instant') sfx.trade();
+                addLog(`${current.name} bank-traded ${rate} ${give} → 1 ${get}`);
+              }
             }
             break;
           case 'skip_trade':
@@ -320,7 +364,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
             break;
           case 'move_robber':
             addLog(`${current.name} moved the robber`);
-            sfx.robber();
+            if (aiSpeed !== 'instant') sfx.robber();
             break;
           case 'discard':
             {
@@ -348,15 +392,19 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
             }
             break;
           case 'play_knight':
+            if (aiSpeed !== 'instant') sfx.knight();
             addLog(`${current.name} played a Knight`);
             break;
           case 'play_year_of_plenty':
+            if (aiSpeed !== 'instant') sfx.yearOfPlenty();
             addLog(`${current.name} played Year of Plenty`);
             break;
           case 'play_monopoly':
+            if (aiSpeed !== 'instant') sfx.monopoly();
             addLog(`${current.name} played Monopoly`);
             break;
           case 'play_road_building':
+            if (aiSpeed !== 'instant') sfx.roadBuilding();
             addLog(`${current.name} played Road Building`);
             break;
           case 'end_turn':
@@ -415,7 +463,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
       if (gameState.setupPhase) {
         const err = placeSetupSettlement(gameState, p.key);
         if (err === null) {
-          sfx.build();
+          sfx.settlement();
           addLog(`${player.name} placed a settlement`);
           advanceSetup(gameState);
           setPendingPlacement(null);
@@ -424,7 +472,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
       } else {
         const err = placeSettlement(gameState, p.key);
         if (err === null) {
-          sfx.build();
+          sfx.settlement();
           addLog(`${player.name} built a settlement`);
           setPendingPlacement(null);
           setSelectedAction(null);
@@ -437,7 +485,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     if (p.kind === 'city') {
       const err = placeCity(gameState, p.key);
       if (err === null) {
-        sfx.build();
+        sfx.city();
         addLog(`${player.name} upgraded to a city`);
         setPendingPlacement(null);
         setSelectedAction(null);
@@ -484,7 +532,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
         if (pendingPlacement?.kind === 'settlement' && pendingPlacement.key === key) {
           commitPlacement(next);
         } else {
-          sfx.click();
+          sfx.preview();
           setPendingPlacement(next);
         }
       }
@@ -502,7 +550,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
         if (pendingPlacement?.kind === 'settlement' && pendingPlacement.key === key) {
           commitPlacement(next);
         } else {
-          sfx.click();
+          sfx.preview();
           setPendingPlacement(next);
         }
       } else if (selectedAction === 'city') {
@@ -516,7 +564,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
         if (pendingPlacement?.kind === 'city' && pendingPlacement.key === key) {
           commitPlacement(next);
         } else {
-          sfx.click();
+          sfx.preview();
           setPendingPlacement(next);
         }
       }
@@ -544,7 +592,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
         if (pendingPlacement?.kind === 'road' && pendingPlacement.key === key) {
           commitPlacement(next);
         } else {
-          sfx.click();
+          sfx.preview();
           setPendingPlacement(next);
         }
       }
@@ -562,7 +610,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
       if (pendingPlacement?.kind === 'road' && pendingPlacement.key === key) {
         commitPlacement(next);
       } else {
-        sfx.click();
+        sfx.preview();
         setPendingPlacement(next);
       }
     }
@@ -573,11 +621,13 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     if (gameState.phase !== 'turn_order') return;
     // If we've already rolled (rolls shown), this tap starts placing
     if (turnOrderRolls) {
+      sfx.click();
       gameState.phase = 'setup_settlement';
       gameState.setupRound = 0;
       setGameState({ ...gameState });
       return;
     }
+    sfx.dice();
     const result = rollTurnOrder(gameState);
     setTurnOrderRolls(result.rolls);
     // Log the result in order
@@ -591,6 +641,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
   const handleRollDice = useCallback(() => {
     if (!gameState || diceRolling || gameState.phase !== 'roll' || robberMode || pendingSteal) return;
     setDiceRolling(true);
+    sfx.diceShake();
     setTimeout(() => {
       const [d1, d2] = rollDice(gameState);
       const total = d1 + d2;
@@ -604,7 +655,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
       // The AI reaches build via its internal skip_trade.
       
       if (total === 7) {
-        sfx.robber();
+        window.setTimeout(() => sfx.robber(), 220);
         addLog('7 rolled! Robber time!');
         // Auto-discard for AI players who have >7 cards.
         for (const ai of gameState.players) {
@@ -635,6 +686,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
   const handleEndTurn = useCallback(() => {
     if (!gameState || robberMode || pendingSteal) return;
     const player = getCurrentPlayer(gameState);
+    sfx.endTurn();
     endTurn(gameState);
     addLog(`${player.name} ended their turn`);
     setSelectedAction(null);
@@ -644,6 +696,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
 
   const handleSkipTrade = useCallback(() => {
     if (!gameState || robberMode || pendingSteal) return;
+    sfx.click();
     gameState.phase = 'build';
     setSelectedAction(null);
     setGameState({ ...gameState });
@@ -665,6 +718,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     if (!gameState || robberMode || pendingSteal) return;
     const err = playRoadBuilding(gameState);
     if (err === null) {
+      sfx.roadBuilding();
       addLog(`${getCurrentPlayer(gameState).name} played Road Building!`);
       setSelectedAction('road');
       setShowPanel(null);
@@ -676,6 +730,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     if (!gameState || robberMode || pendingSteal) return;
     const err = playYearOfPlenty(gameState, r1, r2);
     if (err === null) {
+      sfx.yearOfPlenty();
       addLog(`${getCurrentPlayer(gameState).name} played Year of Plenty!`);
       setGameState({ ...gameState });
     }
@@ -685,6 +740,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     if (!gameState || robberMode || pendingSteal) return;
     const err = playMonopoly(gameState, r);
     if (err === null) {
+      sfx.monopoly();
       addLog(`${getCurrentPlayer(gameState).name} played Monopoly on ${r}!`);
       setGameState({ ...gameState });
     }
@@ -705,6 +761,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     if (!gameState || robberMode || pendingSteal) return;
     const err = playKnight(gameState);
     if (err === null) {
+      sfx.knight();
       addLog(`${getCurrentPlayer(gameState).name} played a Knight!`);
       setRobberMode(true);
       setShowPanel(null);
@@ -717,6 +774,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
     const stolen: { resource?: ResourceType } = {};
     const err = stealFrom(gameState, target, stolen);
     if (err === null) {
+      sfx.steal();
       addLog(`Robber stole ${stolen.resource || 'a card'} from ${getPlayerByColor(gameState, target)?.name}`);
     }
     setPendingSteal(null);
@@ -830,17 +888,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           dice={gameState.dice}
           rightActions={(
             <>
-              <button
-                className={`score-icon-btn ${muted ? '' : 'score-icon-btn-on'}`}
-                onClick={() => {
-                  const next = !muted;
-                  setMuted(next);
-                  setMutedState(next);
-                  if (!next) unlockAudio();
-                }}
-                title={muted ? 'Unmute sounds' : 'Mute sounds'}
-                type="button"
-              >{muted ? '🔇' : '🔊'}</button>
+              <AudioControl />
               <button
                 className={`score-icon-btn ${debug ? 'score-icon-btn-on' : ''}`}
                 onClick={() => setDebug(d => !d)}
@@ -876,7 +924,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           isMyTurn={isMyTurn}
           pendingPlacement={pendingPlacement}
           onConfirmPlacement={() => pendingPlacement && commitPlacement(pendingPlacement)}
-          onCancelPlacement={() => setPendingPlacement(null)}
+          onCancelPlacement={() => { sfx.cancel(); setPendingPlacement(null); }}
           debug={debug}
         />
         <DiceFlash
@@ -949,6 +997,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           onAccept={(from) => {
             const err = respondToTrade(gameState, me.color, from, true);
             if (err === null) {
+              sfx.trade();
               addLog(gameState.tradeOffers.find(o => o.from === from && o.to === undefined)
                 ? `You accepted ${getPlayerByColor(gameState, from)?.name}'s table offer`
                 : `Trade completed with ${getPlayerByColor(gameState, from)?.name}`);
@@ -956,6 +1005,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
             setGameState({ ...gameState });
           }}
           onReject={(from) => {
+            sfx.cancel();
             respondToTrade(gameState, me.color, from, false);
             addLog(`You declined ${getPlayerByColor(gameState, from)?.name}'s offer`);
             setGameState({ ...gameState });
@@ -963,6 +1013,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
           onCounter={(from, give, want) => {
             const offer = gameState.tradeOffers.find(o => (o.to === undefined || o.to === me.color) && o.from === from);
             if (offer) {
+              sfx.tradeOffer();
               gameState.tradeOffers = gameState.tradeOffers.filter(o => o !== offer);
               gameState.tradeOffers.push({ from: me.color, to: from, give, want });
               addLog(`Counter-offer sent to ${getPlayerByColor(gameState, from)?.name}`);
@@ -993,6 +1044,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
                         isMyTurn={isMyTurn}
                         selectedAction={selectedAction}
                         onSelectAction={(act) => {
+                          sfx.click();
                           setSelectedAction(act);
                           if (act) setShowPanel(null);
                         }}
@@ -1014,6 +1066,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
                           if (!gRes || !wRes) return;
                           const err = executeBankTrade(gameState, gRes, give[gRes] || 0, wRes);
                           if (err === null) {
+                            sfx.trade();
                             addLog(`${player.name} bank-traded ${give[gRes]} ${gRes} → ${want[wRes]} ${wRes}`);
                             setGameState({ ...gameState });
                           }
@@ -1021,6 +1074,7 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
                         onProposeTrade={(give, want) => {
                           const err = proposePublicTrade(gameState, give, want);
                           if (err === null) {
+                            sfx.tradeOffer();
                             addLog(`${player.name} offered a trade to the table`);
                             aiRespondToPublicOffers(gameState);
                             setGameState({ ...gameState });
@@ -1030,11 +1084,13 @@ export default function Game({ quickStart = false, playerName = 'You', onExit, r
                           const name = getPlayerByColor(gameState, partner)?.name;
                           const err = completeTradeWith(gameState, partner);
                           if (err === null) {
+                            sfx.trade();
                             addLog(`${player.name} traded with ${name}`);
                             setGameState({ ...gameState });
                           }
                         }}
                         onCancelOffer={() => {
+                          sfx.cancel();
                           cancelTradeOffer(gameState);
                           addLog(`${player.name} withdrew the table offer`);
                           setGameState({ ...gameState });

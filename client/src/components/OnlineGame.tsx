@@ -18,7 +18,8 @@ import TurnCoach from './TurnCoach';
 import PushToggle from './PushToggle';
 import TurnTimer from './TurnTimer';
 import DevCardReveal from './DevCardReveal';
-import { unlockAudio, sfx, isMuted, setMuted } from '../audio';
+import AudioControl from './AudioControl';
+import { unlockAudio, sfx, setAudioScene } from '../audio';
 import { getTurnCoach } from '../turnCoach';
 import { recordGame } from '../stats';
 
@@ -36,12 +37,12 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
   const [showPanel, setShowPanel] = useState<'actions' | 'hand' | 'chat' | null>(null);
   const [diceFlash, setDiceFlash] = useState<{ total: number; faces: [number, number] } | null>(null);
   const [debug, setDebug] = useState(() => new URLSearchParams(window.location.search).get('debug') === '1');
-  const [muted, setMutedState] = useState(() => isMuted());
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [orderFlash, setOrderFlash] = useState<{ order: PlayerColor[]; rolls: Record<string, number> } | null>(null);
   const [devReveal, setDevReveal] = useState<{ type?: string | null; buyerName?: string } | null>(null);
   const lastTurnColorRef = useRef<string | null>(null);
   const lastDiceKeyRef = useRef<string>('');
+  const lastAwardsRef = useRef<{ init: boolean; lr?: string; la?: string }>({ init: false });
   const statsRecordedRef = useRef(false);
 
   useEffect(() => {
@@ -51,12 +52,17 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
   }, []);
 
   useEffect(() => {
+    setAudioScene('game');
+    return () => setAudioScene('menu');
+  }, []);
+
+  useEffect(() => {
     if (gameState?.dice) {
       const key = `${gameState.dice[0]}-${gameState.dice[1]}-${gameState.currentTurn}-${gameState.round}`;
       if (key !== lastDiceKeyRef.current) {
         lastDiceKeyRef.current = key;
         sfx.dice();
-        if (gameState.dice[0] + gameState.dice[1] === 7) sfx.robber();
+        if (gameState.dice[0] + gameState.dice[1] === 7) window.setTimeout(() => sfx.robber(), 220);
       }
       setDiceFlash({ total: gameState.dice[0] + gameState.dice[1], faces: [gameState.dice[0], gameState.dice[1]] });
     }
@@ -72,11 +78,29 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
   }, [gameState?.currentTurn, gameState?.phase, room, playerId]);
 
   useEffect(() => {
+    if (!gameState) {
+      lastAwardsRef.current = { init: false };
+      return;
+    }
+    const lr = gameState.longestRoad?.color;
+    const la = gameState.largestArmy?.color;
+    if (!lastAwardsRef.current.init) {
+      lastAwardsRef.current = { init: true, lr, la };
+      return;
+    }
+    if ((lr && lr !== lastAwardsRef.current.lr) || (la && la !== lastAwardsRef.current.la)) {
+      sfx.award();
+    }
+    lastAwardsRef.current = { init: true, lr, la };
+  }, [gameState?.longestRoad?.color, gameState?.largestArmy?.color]);
+
+  useEffect(() => {
     if (!gameState?.winner) return;
-    sfx.win();
+    const myColor = room?.players.find(rp => rp.playerId === playerId)?.color;
+    if (myColor && myColor === gameState.winner) sfx.win();
+    else sfx.lose();
     if (statsRecordedRef.current) return;
     statsRecordedRef.current = true;
-    const myColor = room?.players.find(rp => rp.playerId === playerId)?.color;
     const winner = gameState.players.find(p => p.color === gameState.winner);
     recordGame({
       players: gameState.players.length,
@@ -129,8 +153,15 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
       }
     }
     if (lastActionResult?.action === 'discard') sfx.discard();
-    if (lastActionResult?.action === 'place_settlement' || lastActionResult?.action === 'place_city') sfx.build();
+    if (lastActionResult?.action === 'place_settlement') sfx.settlement();
+    if (lastActionResult?.action === 'place_city') sfx.city();
     if (lastActionResult?.action === 'place_road') sfx.road();
+    if (lastActionResult?.action === 'bank_trade' || lastActionResult?.action === 'complete_trade') sfx.trade();
+    if (lastActionResult?.action === 'propose_trade') sfx.tradeOffer();
+    if (lastActionResult?.action === 'play_knight') sfx.knight();
+    if (lastActionResult?.action === 'play_year_of_plenty') sfx.yearOfPlenty();
+    if (lastActionResult?.action === 'play_monopoly') sfx.monopoly();
+    if (lastActionResult?.action === 'play_road_building') sfx.roadBuilding();
     if (lastActionResult?.action === 'buy_dev_card') {
       const res = lastActionResult.result as { card?: { type?: string } | null; buyer?: PlayerColor; bought?: boolean } | null;
       if (!res) return;
@@ -217,7 +248,7 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
       if (pendingPlacement?.kind === 'settlement' && pendingPlacement.key === key) {
         commitPlacement(next);
       } else {
-        sfx.click();
+        sfx.preview();
         setPendingPlacement(next);
       }
       return;
@@ -234,7 +265,7 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
         if (pendingPlacement?.kind === 'settlement' && pendingPlacement.key === key) {
           commitPlacement(next);
         } else {
-          sfx.click();
+          sfx.preview();
           setPendingPlacement(next);
         }
       } else if (selectedAction === 'city') {
@@ -248,7 +279,7 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
         if (pendingPlacement?.kind === 'city' && pendingPlacement.key === key) {
           commitPlacement(next);
         } else {
-          sfx.click();
+          sfx.preview();
           setPendingPlacement(next);
         }
       }
@@ -278,7 +309,7 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
       if (pendingPlacement?.kind === 'road' && pendingPlacement.key === key) {
         commitPlacement(next);
       } else {
-        sfx.click();
+        sfx.preview();
         setPendingPlacement(next);
       }
       return;
@@ -294,19 +325,22 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
       if (pendingPlacement?.kind === 'road' && pendingPlacement.key === key) {
         commitPlacement(next);
       } else {
-        sfx.click();
+        sfx.preview();
         setPendingPlacement(next);
       }
     }
   }, [selectedAction, gameState, room, playerId, robberMode, pendingSteal, stealTargets.length, pendingPlacement, commitPlacement]);
 
   const handleRollDice = useCallback(() => {
+    sfx.diceShake();
     sendAction('roll_dice');
   }, [sendAction]);
   const handleTurnOrder = useCallback(() => {
+    sfx.dice();
     sendAction('roll_turn_order');
   }, [sendAction]);
   const handleEndTurn = useCallback(() => {
+    sfx.endTurn();
     sendAction('end_turn');
     setSelectedAction(null);
   }, [sendAction]);
@@ -474,17 +508,7 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
           awayColors={awayColors}
           rightActions={(
             <>
-              <button
-                className={`score-icon-btn ${muted ? '' : 'score-icon-btn-on'}`}
-                onClick={() => {
-                  const next = !muted;
-                  setMuted(next);
-                  setMutedState(next);
-                  if (!next) unlockAudio();
-                }}
-                title={muted ? 'Unmute' : 'Mute'}
-                type="button"
-              >{muted ? '🔇' : '🔊'}</button>
+              <AudioControl />
               <button
                 className={`score-icon-btn ${debug ? 'score-icon-btn-on' : ''}`}
                 onClick={() => setDebug(d => !d)}
@@ -523,7 +547,7 @@ export default function OnlineGame({ onLeaveTable }: { onLeaveTable?: () => void
           isMyTurn={isMyTurn}
           pendingPlacement={pendingPlacement}
           onConfirmPlacement={() => pendingPlacement && commitPlacement(pendingPlacement)}
-          onCancelPlacement={() => setPendingPlacement(null)}
+          onCancelPlacement={() => { sfx.cancel(); setPendingPlacement(null); }}
           debug={debug}
         />
         <DiceFlash

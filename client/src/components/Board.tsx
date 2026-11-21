@@ -10,6 +10,7 @@ import {
   getEdgesForIntersection,
 } from '../game/board';
 import { getCurrentPlayer } from '../game/rules';
+import { sfx } from '../audio';
 
 export interface PendingPlacement {
   kind: 'settlement' | 'city' | 'road';
@@ -1203,6 +1204,7 @@ export default function Board({
       ? `${gameState.dice[0]}-${gameState.dice[1]}-${gameState.currentTurn}-${gameState.round}`
       : '',
   );
+  const lastCollectSfxRef = useRef<number>(0);
   const [rollAnimTick, setRollAnimTick] = useState(0);
 
   // Tightly centered canvas around the hexagonal wooden sea frame (no left tray)
@@ -1326,6 +1328,14 @@ export default function Board({
       pops,
     };
     setRollAnimTick(t => t + 1);
+    if (pops.length > 0) {
+      const now = performance.now();
+      if (now - lastCollectSfxRef.current > 380) {
+        lastCollectSfxRef.current = now;
+        const count = pops.length;
+        window.setTimeout(() => sfx.collect(count), 220);
+      }
+    }
   }, [gameState, hexSize, CANVAS_W, CANVAS_H]);
 
   // ── Base Static Board Canvas ──
